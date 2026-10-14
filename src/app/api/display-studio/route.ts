@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 
@@ -25,7 +26,9 @@ const DEFAULT_PREFERENCES = {
   focusMode: false,
 };
 
-function validatePreferences(value: unknown) {
+function validatePreferences(
+  value: unknown
+): Prisma.InputJsonObject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -79,13 +82,24 @@ function validatePreferences(value: unknown) {
 
   if (!valid) return null;
 
-  // Only accept known preference keys.
-  return Object.fromEntries(
-    Object.keys(DEFAULT_PREFERENCES).map((key) => [
-      key,
-      input[key],
-    ])
-  );
+  // Keep only recognized preference keys and JSON-compatible values.
+  const preferences: Record<string, Prisma.InputJsonValue> = {};
+
+  for (const key of Object.keys(DEFAULT_PREFERENCES)) {
+    const preferenceValue = input[key];
+
+    if (
+      typeof preferenceValue !== "string" &&
+      typeof preferenceValue !== "number" &&
+      typeof preferenceValue !== "boolean"
+    ) {
+      return null;
+    }
+
+    preferences[key] = preferenceValue;
+  }
+
+  return preferences;
 }
 
 export async function GET() {
@@ -95,8 +109,7 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      preferences:
-        settings?.preferences ?? DEFAULT_PREFERENCES,
+      preferences: settings?.preferences ?? DEFAULT_PREFERENCES,
     });
   } catch (error) {
     console.error("Failed to load Display Studio defaults:", error);
