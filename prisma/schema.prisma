@@ -22,6 +22,8 @@ model User {
   ownedConsultations            Consultation[]           @relation("ConsultationOwner")
   createdConsultationActivities ConsultationActivity[]   @relation("ConsultationActivityUser")
   notifications                 Notification[]
+  sessions  UserSession[] @relation("UserSessions")
+  auditLogs AuditLog[]    @relation("AuditLogActor")
 }
 
 model PortfolioSite {
@@ -596,4 +598,33 @@ model DisplayStudioSettings {
   preferences Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+model UserSession {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+  deviceLabel  String?
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+  lastActiveAt DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String
+  targetType  String?
+  targetId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
 }

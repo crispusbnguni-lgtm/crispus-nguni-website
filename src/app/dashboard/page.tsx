@@ -237,6 +237,12 @@ export default async function DashboardPage() {
                 <DashboardIcon name="settings" />
                 Display Studio
               </Link>
+              <Link
+  href="/dashboard/security/sessions"
+  className={glassButton}
+>
+  Sessions &amp; Devices
+</Link>
 
               <NotificationBell />
 

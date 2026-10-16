@@ -1,7 +1,9 @@
+
 import { NextResponse } from "next/server";
 import argon2 from "argon2";
 import { prisma } from "@/lib/prisma";
 import { createSession } from "@/lib/auth";
+import { checkAuthRateLimit } from "@/lib/rate-limit";
 
 function createSlug(name: string) {
   const baseSlug = name
@@ -15,11 +17,47 @@ function createSlug(name: string) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: Record<string, unknown>;
 
-    const name = String(body.name ?? "").trim();
-    const email = String(body.email ?? "").trim().toLowerCase();
-    const password = String(body.password ?? "").trim();
+    try {
+      const parsed: unknown = await request.json();
+
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Invalid request body.",
+          },
+          { status: 400 },
+        );
+      }
+
+      body = parsed as Record<string, unknown>;
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Invalid request body.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const name =
+      typeof body.name === "string" ? body.name.trim() : "";
+
+    const email =
+      typeof body.email === "string"
+        ? body.email.trim().toLowerCase()
+        : "";
+
+    // Preserve intentional leading and trailing spaces in passwords.
+    const password =
+      typeof body.password === "string" ? body.password : "";
 
     if (!name || !email || !password) {
       return NextResponse.json(
@@ -27,7 +65,21 @@ export async function POST(request: Request) {
           success: false,
           message: "Name, email and password are required.",
         },
-        { status: 400 }
+        { status: 400 },
+      );
+    }
+
+    if (
+      name.length > 100 ||
+      email.length > 254 ||
+      password.length > 1024
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Please check the length of your details.",
+        },
+        { status: 400 },
       );
     }
 
@@ -37,12 +89,49 @@ export async function POST(request: Request) {
           success: false,
           message: "Password must be at least 8 characters.",
         },
-        { status: 400 }
+        { status: 400 },
+      );
+    }
+
+    const rateLimit = await checkAuthRateLimit({
+      request,
+      action: "signup",
+    });
+
+    if (rateLimit.unavailable) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Signup is temporarily unavailable. Please try again shortly.",
+        },
+        {
+          status: 503,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+    }
+
+    if (rateLimit.limited) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Too many signup attempts. Please try again later.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.retryAfter),
+            "Cache-Control": "no-store",
+          },
+        },
       );
     }
 
     const existingUser = await prisma.user.findUnique({
       where: { email },
+      select: { id: true },
     });
 
     if (existingUser) {
@@ -51,7 +140,7 @@ export async function POST(request: Request) {
           success: false,
           message: "An account with that email already exists.",
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -74,12 +163,15 @@ export async function POST(request: Request) {
           },
         },
       },
-      include: {
-        portfolioSite: true,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
       },
     });
 
-    await createSession(user.id);
+    await createSession(user.id, request);
 
     return NextResponse.json(
       {
@@ -92,7 +184,10 @@ export async function POST(request: Request) {
           role: user.role,
         },
       },
-      { status: 201 }
+      {
+        status: 201,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   } catch (error) {
     console.error("Signup error:", error);
@@ -100,9 +195,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        message: "Something went wrong while creating your account.",
+        message:
+          "Something went wrong while creating your account.",
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   }
 }

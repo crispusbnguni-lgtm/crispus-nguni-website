@@ -129,8 +129,9 @@ export async function GET(
         "Content-Type":
           media.mimeType || "application/octet-stream",
         "Content-Length": String(media.size),
-        "Cache-Control":
-          "public, max-age=3600, s-maxage=3600",
+        "Cache-Control": publicPortfolioAccess || publishedPostAccess
+  ? "public, max-age=3600, s-maxage=3600"
+  : "private, no-store",
       },
     });
   } catch (error) {

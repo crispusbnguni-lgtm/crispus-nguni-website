@@ -72,6 +72,15 @@ export default async function AdminPage() {
             >
               Display Studio
             </Link>
+            <Link
+  href="/admin/accounts"
+  className={navigationClass}
+>
+  All Accounts
+</Link>
+            <Link href="/admin/sessions">
+  Sessions & Devices
+</Link>
 
             <Link
               href="/dashboard"

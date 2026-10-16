@@ -15,7 +15,7 @@ const stages = [
   { code: "IS", meaning: "INTEGRITY & SERVICE" },
   { code: "PU", meaning: "PURPOSE UNLOCKED" },
   { code: "S", meaning: "SUCCESS" },
-];
+] as const;
 
 const particles = Array.from({ length: 36 }, (_, i) => ({
   id: i,
@@ -26,35 +26,49 @@ const particles = Array.from({ length: 36 }, (_, i) => ({
   size: 2 + (i % 3),
 }));
 
-export function OpportunityReveal() {
-  const [finished, setFinished] = useState(() => {
+const easePremium = [0.22, 1, 0.36, 1] as const;
+
+function hasSeenIntro() {
   try {
-    return (
-      typeof window !== "undefined" &&
-      sessionStorage.getItem(INTRO_KEY) === "1"
-    );
+    return sessionStorage.getItem(INTRO_KEY) === "1";
   } catch {
     return false;
   }
-});
+}
+
+function markIntroSeen() {
+  try {
+    sessionStorage.setItem(INTRO_KEY, "1");
+  } catch {
+    // The intro can finish without browser storage.
+  }
+}
+
+export function OpportunityReveal() {
+  // These initial values must match on the server and first client render.
+  const [finished, setFinished] = useState(false);
+  const [introReady, setIntroReady] = useState(false);
   const [stage, setStage] = useState(-1);
+
   const shouldReduceMotion = useReducedMotion();
 
+  // Read sessionStorage only after hydration.
   useEffect(() => {
-    if (finished) return;
+    setFinished(hasSeenIntro());
+    setIntroReady(true);
+  }, []);
+
+  // Run the introduction only after checking whether it was already seen.
+  useEffect(() => {
+    if (!introReady || finished) return;
 
     const complete = () => {
-      try {
-        sessionStorage.setItem(INTRO_KEY, "1");
-      } catch {
-        // The intro can finish without session storage.
-      }
-
+      markIntroSeen();
       setFinished(true);
     };
 
     const mediaQuery = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
+      "(prefers-reduced-motion: reduce)",
     );
 
     if (mediaQuery.matches || shouldReduceMotion) {
@@ -70,12 +84,14 @@ export function OpportunityReveal() {
       window.setTimeout(complete, 6900),
     ];
 
-    return () => timers.forEach(window.clearTimeout);
-  }, [finished, shouldReduceMotion]);
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [introReady, finished, shouldReduceMotion]);
 
   return (
     <AnimatePresence>
-      {!finished && (
+      {introReady && !finished && (
         <motion.div
           key="crispus-opportunity-intro"
           role="status"
@@ -89,7 +105,7 @@ export function OpportunityReveal() {
           }}
           transition={{
             duration: 0.75,
-            ease: [0.22, 1, 0.36, 1],
+            ease: easePremium,
           }}
           className="fixed inset-0 z-[9999] isolate flex min-h-[100svh] items-center justify-center overflow-hidden bg-[#050711] text-white"
         >
@@ -212,7 +228,7 @@ export function OpportunityReveal() {
               <span className="h-px w-7 bg-gradient-to-l from-transparent to-cyan-200/70" />
             </motion.div>
 
-            {/* Floating liquid-glass monogram */}
+            {/* Liquid Glass monogram */}
             <motion.div
               initial={
                 shouldReduceMotion
@@ -247,10 +263,7 @@ export function OpportunityReveal() {
                 animate={
                   shouldReduceMotion
                     ? undefined
-                    : {
-                        rotate: 360,
-                        scale: [1, 1.045, 1],
-                      }
+                    : { rotate: 360, scale: [1, 1.045, 1] }
                 }
                 transition={{
                   rotate: {
@@ -341,11 +354,7 @@ export function OpportunityReveal() {
               initial={
                 shouldReduceMotion
                   ? false
-                  : {
-                      opacity: 0,
-                      y: 24,
-                      filter: "blur(8px)",
-                    }
+                  : { opacity: 0, y: 24, filter: "blur(8px)" }
               }
               animate={{
                 opacity: 1,
@@ -355,18 +364,17 @@ export function OpportunityReveal() {
               transition={{
                 duration: 0.9,
                 delay: 0.55,
-                ease: [0.22, 1, 0.36, 1],
+                ease: easePremium,
               }}
               className="mb-3"
             >
               <h1 className="text-4xl font-medium tracking-[-0.075em] sm:text-6xl md:text-7xl">
-                CRISPUS
-                <span className="text-cyan-200">.</span>
+                CRISPUS<span className="text-cyan-200">.</span>
               </h1>
             </motion.div>
 
             <motion.p
-              initial={{ opacity: 0, y: 12 }}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.8 }}
               className="mb-9 max-w-md text-xs leading-6 tracking-[0.12em] text-slate-400 sm:text-sm"
@@ -380,7 +388,7 @@ export function OpportunityReveal() {
 
             {/* Opportunity stages */}
             <motion.div
-              initial={{ opacity: 0, y: 18 }}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 1 }}
               className="w-full max-w-md"
@@ -447,11 +455,7 @@ export function OpportunityReveal() {
                     initial={
                       shouldReduceMotion
                         ? false
-                        : {
-                            opacity: 0,
-                            y: 10,
-                            filter: "blur(5px)",
-                          }
+                        : { opacity: 0, y: 10, filter: "blur(5px)" }
                     }
                     animate={{
                       opacity: 1,
@@ -461,11 +465,7 @@ export function OpportunityReveal() {
                     exit={
                       shouldReduceMotion
                         ? undefined
-                        : {
-                            opacity: 0,
-                            y: -8,
-                            filter: "blur(4px)",
-                          }
+                        : { opacity: 0, y: -8, filter: "blur(4px)" }
                     }
                     transition={{ duration: 0.35 }}
                     className="text-[10px] font-medium tracking-[0.24em] text-cyan-100/80 sm:text-[11px]"
@@ -480,7 +480,7 @@ export function OpportunityReveal() {
 
             {/* Animated progress */}
             <motion.div
-              initial={{ opacity: 0 }}
+              initial={shouldReduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1.2, duration: 0.8 }}
               className="mt-9 w-48 max-w-full"
@@ -489,7 +489,7 @@ export function OpportunityReveal() {
                 <span>PREPARING YOUR EXPERIENCE</span>
                 <span className="tabular-nums">
                   {Math.round(
-                    ((stage + 1) / stages.length) * 100
+                    ((stage + 1) / stages.length) * 100,
                   )
                     .toString()
                     .padStart(2, "0")}
@@ -506,7 +506,7 @@ export function OpportunityReveal() {
                   }}
                   transition={{
                     duration: 0.7,
-                    ease: [0.22, 1, 0.36, 1],
+                    ease: easePremium,
                   }}
                 />
               </div>
@@ -515,7 +515,7 @@ export function OpportunityReveal() {
 
           {/* Footer */}
           <motion.div
-            initial={{ opacity: 0, y: 8 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 1.4, duration: 0.8 }}
             className="absolute bottom-5 left-0 right-0 px-4 text-center"
