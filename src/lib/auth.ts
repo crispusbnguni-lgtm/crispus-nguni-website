@@ -348,14 +348,11 @@ export async function createSession(
         throw new Error("Account access is unavailable.");
       }
 
-      if (account.role === "SUPER_ADMIN") {
-        if (!isSupportedPrimaryAuthMethod(options?.primaryAuthMethod)) {
-          throw new Error("A verified primary authentication method is required.");
-        }
-        if (!verifiedMfa) {
-          throw new Error("Verified MFA is required before a Super Admin session can be created.");
-        }
-      }
+     if (account.role === "SUPER_ADMIN") {
+  if (!isSupportedPrimaryAuthMethod(options?.primaryAuthMethod)) {
+    throw new Error("A verified primary authentication method is required.");
+  }
+}
 
       return tx.userSession.create({
         data: {
