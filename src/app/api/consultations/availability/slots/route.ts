@@ -1,38 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAvailabilitySlots } from "@/lib/consultations/availability";
+import { getAvailabilitySlots, getZonedDayRange, isValidIanaTimezone } from "@/lib/consultations/availability";
 
 function isValidDate(value: string) {
   const date = new Date(value);
 
-  return (
-    !Number.isNaN(date.getTime()) &&
-    /^\d{4}-\d{2}-\d{2}$/.test(value)
-  );
-}
-
-function startOfUtcDay(date: Date) {
-  return new Date(
-    Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-    ),
-  );
-}
-
-function endOfUtcDay(date: Date) {
-  return new Date(
-    Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-      23,
-      59,
-      59,
-      999,
-    ),
-  );
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(date.getTime())) return false;
+  return date.toISOString().slice(0, 10) === value;
 }
 
 export async function GET(request: Request) {
@@ -101,6 +75,8 @@ export async function GET(request: Request) {
         select: {
           id: true,
           published: true,
+          timezone: true,
+          timezoneReviewRequired: true,
         },
       });
 
@@ -124,6 +100,12 @@ export async function GET(request: Request) {
         { status: 404 },
       );
     }
+
+    if (portfolio.timezoneReviewRequired || !isValidIanaTimezone(portfolio.timezone)) {
+      return NextResponse.json({ success: false, message: "The portfolio owner must review the booking timezone before appointments can be requested." }, { status: 409 });
+    }
+
+    const { startDate, endDate } = getZonedDayRange(date, portfolio.timezone);
 
     const consultationType =
       await prisma.consultationType.findFirst({
@@ -155,16 +137,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const requestedDate = new Date(
-      `${date}T00:00:00.000Z`,
-    );
-
-    const startDate =
-      startOfUtcDay(requestedDate);
-
-    const endDate =
-      endOfUtcDay(requestedDate);
-
     const slots =
       await getAvailabilitySlots({
         portfolioId: portfolio.id,
@@ -177,6 +149,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       date,
+      timezone: portfolio.timezone,
       consultationType,
       slots: slots.map((slot) => ({
         start: slot.start.toISOString(),

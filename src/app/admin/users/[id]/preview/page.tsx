@@ -78,7 +78,7 @@ export default async function AdminPortfolioPreview({
   }
 
   return (
-    <main className="min-h-screen bg-[var(--bg)] text-white">
+    <main className="min-h-screen text-white">
       <div className="sticky top-0 z-50 border-b border-white/10 bg-[var(--bg)]/90 px-6 py-4 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <div>

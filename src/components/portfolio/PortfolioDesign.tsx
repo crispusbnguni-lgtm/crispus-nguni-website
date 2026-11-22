@@ -1,5 +1,6 @@
 
 import type { CSSProperties, ReactNode } from "react";
+import { safePortfolioBackground } from "@/lib/portfolio-public";
 
 type PortfolioDesignProps = {
   theme?: string | null;
@@ -17,13 +18,15 @@ export function PortfolioDesign({
   const isLight = theme === "light";
   const isSepia = theme === "sepia";
 
-  const background = websiteBackground || (
+  const defaultBackground = (
     isLight ? "#F5F7FB" : isSepia ? "#F3E8D0" : "#05070D"
   );
-
-  const isImage =
-    background.startsWith("https://") ||
-    background.startsWith("http://");
+  const parsedBackground = safePortfolioBackground(websiteBackground);
+  const isImage = parsedBackground?.kind === "image";
+  const background = parsedBackground?.kind === "color"
+    ? parsedBackground.value
+    : defaultBackground;
+  const backgroundImage = isImage ? parsedBackground.value : null;
 
   const style: CSSProperties = {
     "--portfolio-bg": isImage
@@ -66,7 +69,7 @@ export function PortfolioDesign({
         color: "var(--portfolio-text)",
         ...(isImage
           ? {
-              backgroundImage: `url("${background.replace(/"/g, '\\"')}")`,
+              backgroundImage: `url("${backgroundImage}")`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundAttachment: "fixed",

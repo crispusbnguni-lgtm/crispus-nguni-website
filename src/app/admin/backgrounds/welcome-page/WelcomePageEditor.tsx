@@ -1,16 +1,15 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import MediaLibrary from "./MediaLibrary";
 import WelcomePageLivePreview from "./WelcomePageLivePreview";
-import type { WelcomePageContent } from "@/lib/welcome-page";
+import { defaultWelcomePageContent, type WelcomePageContent } from "@/lib/welcome-page";
 
 type MediaAsset = {
   name: string;
   url: string;
   path?: string;
-  type?: string;
+  type?: "image" | "video";
 };
 
 type WelcomePageVersion = {
@@ -27,7 +26,16 @@ type ApiResponse = {
   hasDraft?: boolean;
   publishedAt?: string | null;
   history?: WelcomePageVersion[];
+  scheduledAt?: string | null;
 };
+
+function toLocalDateTimeInput(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 const sectionIds: Record<string, string> = {
   "media-library": "welcome-editor-media-library",
@@ -49,6 +57,8 @@ export default function WelcomePageEditor() {
   const [showMediaLibrary, setShowMediaLibrary] = useState(false);
   const [hasDraft, setHasDraft] = useState(false);
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
+  const [scheduledAtInput, setScheduledAtInput] = useState("");
+  const [savedScheduledAt, setSavedScheduledAt] = useState<string | null>(null);
   const [history, setHistory] = useState<WelcomePageVersion[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const [activeSection, setActiveSection] = useState("hero");
@@ -68,6 +78,8 @@ const loadContent = useCallback(async () => {
     setHistory(result.history ?? []);
     setHasDraft(Boolean(result.hasDraft));
     setPublishedAt(result.publishedAt ?? null);
+    setSavedScheduledAt(result.scheduledAt ?? null);
+    setScheduledAtInput(toLocalDateTimeInput(result.scheduledAt));
     setError("");
   } catch (error) {
     setError(
@@ -102,6 +114,8 @@ useEffect(() => {
         setHistory(result.history ?? []);
         setHasDraft(Boolean(result.hasDraft));
         setPublishedAt(result.publishedAt ?? null);
+        setSavedScheduledAt(result.scheduledAt ?? null);
+        setScheduledAtInput(toLocalDateTimeInput(result.scheduledAt));
         setError("");
       }
     } catch (error) {
@@ -202,6 +216,139 @@ useEffect(() => {
     setError("");
   }
 
+function updateStep(
+  index: number,
+  updates: Partial<WelcomePageContent["steps"]["cards"][number]>,
+) {
+  setContent((current) => {
+    if (!current) return current;
+
+    return {
+      ...current,
+      steps: {
+        ...current.steps,
+        cards: current.steps.cards.map((step, stepIndex) =>
+          stepIndex === index ? { ...step, ...updates } : step,
+        ),
+      },
+    };
+  });
+
+  setIsDirty(true);
+  setMessage("");
+  setError("");
+}
+
+function updateWelcomeCard(
+  section: "features" | "audiences",
+  index: number,
+  field: "title" | "description",
+  value: string,
+) {
+  setContent((current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      [section]: {
+        ...current[section],
+        cards: current[section].cards.map((card, cardIndex) =>
+          cardIndex === index
+            ? { ...card, [field]: value }
+            : card,
+        ),
+      },
+    };
+  });
+  setIsDirty(true);
+  setMessage("");
+  setError("");
+}
+
+function updateSeo(field: "title" | "description", value: string) {
+  setContent((current) => current ? {
+    ...current,
+    seo: {
+      ...(current.seo ?? defaultWelcomePageContent.seo!),
+      [field]: value,
+    },
+  } : current);
+  setIsDirty(true);
+  setMessage("");
+  setError("");
+}
+
+type WelcomeSectionKey = NonNullable<WelcomePageContent["sectionOrder"]>[number];
+const WELCOME_SECTIONS: Array<{ key: WelcomeSectionKey; label: string }> = [
+  { key: "hero", label: "Hero" },
+  { key: "features", label: "Platform features" },
+  { key: "audiences", label: "Who it serves" },
+  { key: "steps", label: "How it works" },
+  { key: "cta", label: "Call to action" },
+  { key: "footer", label: "Footer" },
+];
+
+function updateSectionVisibility(key: WelcomeSectionKey, visible: boolean) {
+  setContent((current) => current ? {
+    ...current,
+    sectionVisibility: {
+      ...defaultWelcomePageContent.sectionVisibility,
+      ...current.sectionVisibility,
+      [key]: visible,
+    },
+  } : current);
+  setIsDirty(true);
+  setMessage("");
+  setError("");
+}
+
+function moveWelcomeSection(key: WelcomeSectionKey, direction: -1 | 1) {
+  setContent((current) => {
+    if (!current) return current;
+    const order = [...(current.sectionOrder ?? defaultWelcomePageContent.sectionOrder!)];
+    const index = order.indexOf(key);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= order.length) return current;
+    [order[index], order[target]] = [order[target], order[index]];
+    return { ...current, sectionOrder: order };
+  });
+  setIsDirty(true);
+  setMessage("");
+  setError("");
+}
+
+
+
+  function updateGlassSetting(
+    field: keyof NonNullable<WelcomePageContent["appearance"]["glass"]>,
+    value: number | boolean,
+  ) {
+    setContent((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        appearance: {
+          ...current.appearance,
+          glass: {
+            ...current.appearance.glass,
+            enabled: current.appearance.glass?.enabled ?? true,
+            strength: current.appearance.glass?.strength ?? 0.72,
+            frost: current.appearance.glass?.frost ?? 0.18,
+            transparency: current.appearance.glass?.transparency ?? 0.72,
+            reflection: current.appearance.glass?.reflection ?? 0.65,
+            depth: current.appearance.glass?.depth ?? 0.65,
+            radius: current.appearance.glass?.radius ?? 24,
+            [field]: value,
+          },
+        },
+      };
+    });
+
+    setIsDirty(true);
+    setMessage("");
+    setError("");
+  }
+
   async function saveContent(action: "draft" | "publish") {
     if (!content || saving) return;
 
@@ -235,6 +382,8 @@ useEffect(() => {
       setHasDraft(data.hasDraft ?? false);
       setPublishedAt(data.publishedAt ?? null);
       setHistory(data.history ?? []);
+      setSavedScheduledAt(data.scheduledAt ?? null);
+      setScheduledAtInput(toLocalDateTimeInput(data.scheduledAt));
       setIsDirty(false);
 
       setMessage(
@@ -251,6 +400,59 @@ useEffect(() => {
       setError(
         err instanceof Error ? err.message : "Could not save settings.",
       );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSchedule() {
+    if (!content || saving || !scheduledAtInput) return;
+    if (!window.confirm("Save this content as a scheduled publication? Automatic publishing is not connected yet.")) return;
+    const scheduledAt = new Date(scheduledAtInput);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      setError("Choose a valid future date and time.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/admin/backgrounds/welcome-page", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "schedule", content, scheduledAt: scheduledAt.toISOString() }),
+      });
+      const data: ApiResponse = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Could not save the scheduled publication.");
+      setSavedScheduledAt(data.scheduledAt ?? scheduledAt.toISOString());
+      setScheduledAtInput(toLocalDateTimeInput(data.scheduledAt ?? scheduledAt.toISOString()));
+      setMessage(data.message || "Scheduled publication details saved. Automatic publishing is not connected yet.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the scheduled publication.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelSchedule() {
+    if (saving || !savedScheduledAt) return;
+    if (!window.confirm("Cancel the saved scheduled publication?")) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/admin/backgrounds/welcome-page", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel_schedule" }),
+      });
+      const data: ApiResponse = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Could not cancel the saved schedule.");
+      setSavedScheduledAt(null);
+      setScheduledAtInput("");
+      setMessage(data.message || "Scheduled publication details cancelled.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not cancel the saved schedule.");
     } finally {
       setSaving(false);
     }
@@ -293,6 +495,8 @@ useEffect(() => {
       setHasDraft(data.hasDraft ?? false);
       setPublishedAt(data.publishedAt ?? null);
       setHistory(data.history ?? []);
+      setSavedScheduledAt(data.scheduledAt ?? null);
+      setScheduledAtInput(toLocalDateTimeInput(data.scheduledAt));
       setIsDirty(false);
       setMessage(
         data.message ??
@@ -395,9 +599,9 @@ useEffect(() => {
         rel="noopener noreferrer"
         className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
       >
-        <span aria-hidden="true">◉</span>
+        <span aria-hidden="true">Ã¢â€”â€°</span>
         Preview Draft
-        <span aria-hidden="true">↗</span>
+        <span aria-hidden="true">Ã¢â€ â€”</span>
       </a>
     );
   }
@@ -453,6 +657,10 @@ useEffect(() => {
       </div>
     );
   }
+
+  const glassSettings =
+    content.appearance.glass ??
+    defaultWelcomePageContent.appearance.glass!;
 
   return (
     <div className="space-y-8">
@@ -534,6 +742,36 @@ useEffect(() => {
         </div>
       )}
 
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5" aria-labelledby="welcome-page-structure-heading">
+        <h2 id="welcome-page-structure-heading" className="text-lg font-semibold text-white">Page structure and search preview</h2>
+        <p className="mt-1 text-sm text-slate-400">Reorder or hide homepage sections. Changes stay in draft until published.</p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {WELCOME_SECTIONS.map(({ key, label }) => {
+            const order = content.sectionOrder ?? defaultWelcomePageContent.sectionOrder!;
+            const index = order.indexOf(key);
+            return <div key={key} className="flex min-h-12 items-center gap-2 rounded-xl border border-white/10 px-3">
+              <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-white">
+                <input type="checkbox" checked={(content.sectionVisibility ?? defaultWelcomePageContent.sectionVisibility)?.[key] !== false} onChange={(event) => updateSectionVisibility(key, event.target.checked)} />
+                <span className="truncate">{label}</span>
+              </label>
+              <button type="button" aria-label={`Move ${label} up`} disabled={index <= 0} onClick={() => moveWelcomeSection(key, -1)} className="min-h-9 min-w-9 rounded-lg border border-white/10 text-white disabled:opacity-30">↑</button>
+              <button type="button" aria-label={`Move ${label} down`} disabled={index < 0 || index >= order.length - 1} onClick={() => moveWelcomeSection(key, 1)} className="min-h-9 min-w-9 rounded-lg border border-white/10 text-white disabled:opacity-30">↓</button>
+            </div>;
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-amber-200/15 bg-amber-950/15 p-5" aria-labelledby="welcome-schedule-heading">
+        <h2 id="welcome-schedule-heading" className="text-lg font-semibold text-white">Publication schedule</h2>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-amber-100/70">The CMS can save a future publication time and content for review. There is no automatic publisher connected yet, so this setting will not publish by itself.</p>
+        {savedScheduledAt && <p className="mt-3 text-sm text-white/80" role="status">Saved time: {new Date(savedScheduledAt).toLocaleString()}</p>}
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="grid gap-2 text-sm text-slate-200">Date and time<input type="datetime-local" value={scheduledAtInput} onChange={(event) => setScheduledAtInput(event.target.value)} className="min-h-11 rounded-xl border border-white/15 bg-slate-900 px-3 text-white" /></label>
+          <button type="button" disabled={saving || !scheduledAtInput} onClick={() => void saveSchedule()} className="min-h-11 rounded-xl border border-amber-100/20 px-4 font-semibold text-amber-50 disabled:opacity-40">Save scheduled content</button>
+          {savedScheduledAt && <button type="button" disabled={saving} onClick={() => void cancelSchedule()} className="min-h-11 rounded-xl border border-white/15 px-4 font-semibold text-white/80 disabled:opacity-40">Cancel schedule</button>}
+        </div>
+      </section>
+
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-8">
           <section
@@ -598,6 +836,16 @@ useEffect(() => {
                 Select media to update the editor, then save a draft or publish
                 to apply it.
               </p>
+              <label className="block space-y-2 text-sm font-medium text-slate-300">
+                <span>Focal position</span>
+                <select value={content.hero.backgroundPosition ?? "center center"} onChange={(event) => updateField("hero", "backgroundPosition", event.target.value)} className="w-full rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-white">
+                  <option value="center center">Center</option>
+                  <option value="center top">Top center</option>
+                  <option value="center bottom">Bottom center</option>
+                  <option value="left center">Left</option>
+                  <option value="right center">Right</option>
+                </select>
+              </label>
             </div>
           </section>
 
@@ -642,10 +890,13 @@ useEffect(() => {
               {textField("features", "title", "Section heading")}
             </div>
             {textField("features", "description", "Section description", true)}
-            <p className="text-sm text-slate-400">
-              Feature card titles and descriptions are not yet individually
-              editable here.
-            </p>
+            <div className="grid gap-4">
+              {content.features.cards.map((card, index) => <fieldset key={`feature-${index}`} className="grid gap-3 rounded-xl border border-white/10 p-4 sm:grid-cols-2">
+                <legend className="px-2 text-xs text-slate-400">Feature {index + 1}</legend>
+                <label className="grid gap-2 text-sm text-slate-300">Title<input value={card.title} onChange={(event) => updateWelcomeCard("features", index, "title", event.target.value)} className="min-h-11 rounded-xl border border-white/10 bg-[#080B14] px-3 text-white" /></label>
+                <label className="grid gap-2 text-sm text-slate-300">Description<textarea rows={2} value={card.description} onChange={(event) => updateWelcomeCard("features", index, "description", event.target.value)} className="rounded-xl border border-white/10 bg-[#080B14] px-3 py-2 text-white" /></label>
+              </fieldset>)}
+            </div>
           </section>
 
           <section
@@ -665,32 +916,103 @@ useEffect(() => {
               "Section description",
               true,
             )}
-            <p className="text-sm text-slate-400">
-              Audience card titles and descriptions are not yet individually
-              editable here.
-            </p>
+            <div className="grid gap-4">
+              {content.audiences.cards.map((card, index) => <fieldset key={`audience-${index}`} className="grid gap-3 rounded-xl border border-white/10 p-4 sm:grid-cols-2">
+                <legend className="px-2 text-xs text-slate-400">Audience {index + 1}</legend>
+                <label className="grid gap-2 text-sm text-slate-300">Title<input value={card.title} onChange={(event) => updateWelcomeCard("audiences", index, "title", event.target.value)} className="min-h-11 rounded-xl border border-white/10 bg-[#080B14] px-3 text-white" /></label>
+                <label className="grid gap-2 text-sm text-slate-300">Description<textarea rows={2} value={card.description} onChange={(event) => updateWelcomeCard("audiences", index, "description", event.target.value)} className="rounded-xl border border-white/10 bg-[#080B14] px-3 py-2 text-white" /></label>
+              </fieldset>)}
+            </div>
           </section>
 
-          <section
-            id={sectionIds.steps}
-            className="scroll-mt-8 space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6"
-          >
-            <h2 className="text-xl font-semibold text-white">How it works</h2>
-            <div className="grid gap-5 md:grid-cols-2">
-              {textField("steps", "eyebrow", "Section label")}
-              {textField("steps", "title", "Section heading")}
-            </div>
-            <p className="text-sm text-slate-400">
-              Step card titles and descriptions are not yet individually
-              editable here.
-            </p>
-          </section>
+
+<section
+  id={sectionIds.steps}
+  className="scroll-mt-8 space-y-6 rounded-2xl border border-white/10 bg-white/[0.03] p-6"
+>
+  <div>
+    <h2 className="text-xl font-semibold text-white">How it works</h2>
+    <p className="mt-1 text-sm text-slate-400">
+Edit the number, title and description of each instructional step.
+    </p>
+  </div>
+
+  <div className="grid gap-5 md:grid-cols-2">
+    {textField("steps", "eyebrow", "Section label")}
+    {textField("steps", "title", "Section heading")}
+  </div>
+
+  <div className="space-y-5">
+    {content.steps.cards.map((step, index) => (
+      <div
+        key={`${step.number}-${index}`}
+        className="space-y-4 rounded-2xl border border-white/10 bg-black/20 p-5"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-semibold text-white">
+            Instructional step {index + 1}
+          </h3>
+          <span className="rounded-lg bg-indigo-400/10 px-3 py-1 text-xs text-indigo-200">
+            {step.number}
+          </span>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-2 block text-sm text-slate-300">
+              Step number
+            </label>
+            <input
+              value={step.number}
+              onChange={(event) =>
+                updateStep(index, { number: event.target.value })
+              }
+              className="w-full rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-white outline-none focus:border-indigo-400"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm text-slate-300">
+              Step title
+            </label>
+            <input
+              value={step.title}
+              onChange={(event) =>
+                updateStep(index, { title: event.target.value })
+              }
+              className="w-full rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-white outline-none focus:border-indigo-400"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm text-slate-300">
+            Step description
+          </label>
+          <textarea
+            value={step.description}
+            onChange={(event) =>
+              updateStep(index, { description: event.target.value })
+            }
+            rows={3}
+            className="w-full rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-white outline-none focus:border-indigo-400"
+          />
+        </div>
+
+      </div>
+    ))}
+  </div>
+
+</section>
 
           <section
             id={sectionIds.cta}
             className="scroll-mt-8 space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6"
           >
-            <h2 className="text-xl font-semibold text-white">Call to action</h2>
+            <h2 className="text-xl font-semibold text-white">
+              Call to action
+            </h2>
+
             <div className="grid gap-5 md:grid-cols-2">
               {textField("cta", "eyebrow", "Section label")}
               {textField("cta", "title", "Heading")}
@@ -699,8 +1021,11 @@ useEffect(() => {
               {textField("cta", "secondaryButton", "Secondary button label")}
               {textField("cta", "secondaryLink", "Secondary button link")}
             </div>
+
             {textField("cta", "description", "Description", true)}
           </section>
+
+
 
           <section
             id={sectionIds.footer}
@@ -711,11 +1036,26 @@ useEffect(() => {
             {textField("footer", "copyright", "Copyright text")}
           </section>
 
+          <section className="scroll-mt-8 space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" aria-labelledby="welcome-seo-heading">
+            <div>
+              <h2 id="welcome-seo-heading" className="text-xl font-semibold text-white">Search and social metadata</h2>
+              <p className="mt-1 text-sm text-slate-400">These values are published with the homepage. Draft metadata is never used for public rendering.</p>
+            </div>
+            <label className="grid gap-2 text-sm text-slate-300">SEO title<input maxLength={80} value={(content.seo ?? defaultWelcomePageContent.seo!).title} onChange={(event) => updateSeo("title", event.target.value)} className="min-h-11 rounded-xl border border-white/10 bg-[#080B14] px-4 text-white" /></label>
+            <label className="grid gap-2 text-sm text-slate-300">SEO description<textarea maxLength={180} rows={3} value={(content.seo ?? defaultWelcomePageContent.seo!).description} onChange={(event) => updateSeo("description", event.target.value)} className="rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-white" /></label>
+          </section>
+
           <section
             id={sectionIds.appearance}
-            className="scroll-mt-8 space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6"
+            className="scroll-mt-8 space-y-6 rounded-2xl border border-white/10 bg-white/[0.03] p-6"
           >
-            <h2 className="text-xl font-semibold text-white">Appearance</h2>
+            <div>
+              <h2 className="text-xl font-semibold text-white">Appearance</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Customise the colours and live liquid-glass appearance of your homepage.
+              </p>
+            </div>
+
             <div className="grid gap-5 md:grid-cols-2">
               {textField("appearance", "accentColor", "Accent color (hex)")}
               {textField(
@@ -724,10 +1064,157 @@ useEffect(() => {
                 "Background color (hex)",
               )}
             </div>
-            <p className="text-sm text-slate-400">
-              These values are saved in your settings. The live preview
-              approximates the homepage appearance.
-            </p>
+
+            <div className="space-y-5 rounded-xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-semibold text-white">Liquid Glass</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Controls the glass surfaces across the welcome page.
+                  </p>
+                </div>
+
+                <label className="inline-flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={glassSettings.enabled}
+                    onChange={(event) =>
+                      updateGlassSetting("enabled", event.target.checked)
+                    }
+                    className="h-5 w-5 accent-indigo-500"
+                  />
+                  Enable liquid glass
+                </label>
+              </div>
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Glass strength</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {Math.round(glassSettings.strength * 100)}%
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={glassSettings.strength}
+                    onChange={(event) =>
+                      updateGlassSetting("strength", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Frost</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {Math.round(glassSettings.frost * 100)}%
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={glassSettings.frost}
+                    onChange={(event) =>
+                      updateGlassSetting("frost", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Transparency</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {Math.round(glassSettings.transparency * 100)}%
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={glassSettings.transparency}
+                    onChange={(event) =>
+                      updateGlassSetting("transparency", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Reflection</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {Math.round(glassSettings.reflection * 100)}%
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={glassSettings.reflection}
+                    onChange={(event) =>
+                      updateGlassSetting("reflection", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Depth</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {Math.round(glassSettings.depth * 100)}%
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={glassSettings.depth}
+                    onChange={(event) =>
+                      updateGlassSetting("depth", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="flex justify-between gap-3 text-sm text-slate-300">
+                    <span>Corner radius</span>
+                    <span className="tabular-nums text-indigo-300">
+                      {glassSettings.radius} px
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min="8"
+                    max="40"
+                    step="1"
+                    value={glassSettings.radius}
+                    onChange={(event) =>
+                      updateGlassSetting("radius", Number(event.target.value))
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </label>
+              </div>
+
+              <p className="text-xs leading-5 text-slate-500">
+                Changes update the editor preview immediately. Save as draft to
+                retain your settings, or publish when you are ready to make them
+                visible to visitors.
+              </p>
+            </div>
           </section>
 
           <section className="space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6">

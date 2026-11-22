@@ -7,6 +7,7 @@ import { SkillsSection } from "../sections/SkillsSection";
 import { ProjectsSection } from "../sections/ProjectsSection";
 import { TestimonialsSection } from "../sections/TestimonialsSection";
 import { InsightsSection } from "../sections/InsightsSection";
+import { safePortfolioExternalLink, safePortfolioPhoneHref } from "@/lib/portfolio-public";
 
 type ProfessionalTemplateProps = {
   portfolio: PortfolioData;
@@ -101,7 +102,6 @@ type PortfolioData = {
     title: string;
     slug: string;
     excerpt: string | null;
-    content: string;
     coverImage: string | null;
     category: string | null;
     published: boolean;
@@ -172,7 +172,7 @@ export function ProfessionalTemplate({
       )}
 
       {portfolio.showInsights && (
-        <InsightsSection insights={portfolio.insights} />
+        <InsightsSection insights={portfolio.insights} portfolioSlug={portfolio.slug} />
       )}
 
       {portfolio.showContact && (
@@ -202,18 +202,18 @@ export function ProfessionalTemplate({
                 Book a Consultation
               </a>
 
-              {portfolio.phone && (
+              {safePortfolioPhoneHref(portfolio.phone) && (
                 <a
-                  href={`tel:${portfolio.phone}`}
+                  href={safePortfolioPhoneHref(portfolio.phone)!}
                   className="rounded-full bg-[#126BFF] px-6 py-3.5 text-sm font-medium transition hover:bg-[#2477ff] hover:shadow-[0_0_30px_rgba(18,107,255,0.3)]"
                 >
                   Call
                 </a>
               )}
 
-              {portfolio.whatsapp && (
+              {safePortfolioExternalLink(portfolio.whatsapp) && (
                 <a
-                  href={portfolio.whatsapp}
+                  href={safePortfolioExternalLink(portfolio.whatsapp)!}
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-medium transition hover:bg-white/10"
@@ -222,9 +222,9 @@ export function ProfessionalTemplate({
                 </a>
               )}
 
-              {portfolio.website && (
+              {safePortfolioExternalLink(portfolio.website) && (
                 <a
-                  href={portfolio.website}
+                  href={safePortfolioExternalLink(portfolio.website)!}
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-medium transition hover:bg-white/10"
@@ -233,9 +233,9 @@ export function ProfessionalTemplate({
                 </a>
               )}
 
-              {portfolio.linkedin && (
+              {safePortfolioExternalLink(portfolio.linkedin) && (
                 <a
-                  href={portfolio.linkedin}
+                  href={safePortfolioExternalLink(portfolio.linkedin)!}
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-medium transition hover:bg-white/10"

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
 AnimatePresence,
 motion,
@@ -10,6 +9,8 @@ useReducedMotion,
 type Variants,
 } from "framer-motion";
 import { LiquidLensSurface } from "@/components/ui/LiquidLensSurface";
+import { useReader } from "@/components/ui/ReaderProvider";
+import { PhoneOtpPanel } from "@/components/auth/PhoneOtpPanel";
 
 const cardVariants: Variants = {
 hidden: { opacity: 0, y: 24, scale: 0.985 },
@@ -46,8 +47,8 @@ const features = [
 ];
 
 export default function SignupPage() {
-const router = useRouter();
-const reduceMotion = useReducedMotion();
+const reader = useReader();
+const reduceMotion = useReducedMotion() || reader.preferences.reduceMotion;
 
 const [name, setName] = useState("");
 const [email, setEmail] = useState("");
@@ -58,7 +59,10 @@ const [showPassword, setShowPassword] = useState(false);
 const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
 const [message, setMessage] = useState("");
+const [verificationEmail, setVerificationEmail] = useState("");
 const [loading, setLoading] = useState(false);
+const [resendLoading, setResendLoading] = useState(false);
+const [resendMessage, setResendMessage] = useState("");
 
 async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 event.preventDefault();
@@ -98,7 +102,12 @@ try {
     return;
   }
 
-  router.push("/dashboard");
+  if (data.verificationRequired !== true) {
+    setMessage("We couldn't confirm the verification request. Please try again.");
+    return;
+  }
+
+  setVerificationEmail(email.trim().toLowerCase());
 } catch {
   setMessage("Something went wrong. Please try again.");
 } finally {
@@ -108,6 +117,45 @@ try {
 
 }
 
+async function handleResendVerification() {
+  if (!verificationEmail || resendLoading) return;
+
+  setResendLoading(true);
+  setResendMessage("");
+
+  try {
+    const response = await fetch("/api/auth/resend-verification", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        email: verificationEmail,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setResendMessage(
+        data.message || "We couldn't process your request. Please try again later.",
+      );
+      return;
+    }
+
+    setResendMessage(
+      data.message ||
+        "If an account needs verification, a new link will be sent to its email address.",
+    );
+  } catch {
+    setResendMessage(
+      "We couldn't process your request. Please check your connection and try again.",
+    );
+  } finally {
+    setResendLoading(false);
+  }
+}
 const entrance = reduceMotion
 ? {}
 : {
@@ -314,6 +362,8 @@ ease: "easeInOut",
               </p>
             </motion.div>
 
+{!verificationEmail ? (
+<>
             <motion.div
               variants={reduceMotion ? undefined : itemVariants}
             >
@@ -640,6 +690,8 @@ ease: "easeInOut",
               </motion.div>
             </motion.form>
 
+            <PhoneOtpPanel intent="signup" />
+
             <motion.p
               variants={reduceMotion ? undefined : itemVariants}
               className="mt-6 text-center text-sm text-white/50"
@@ -660,6 +712,115 @@ ease: "easeInOut",
               By creating an account, you can manage your own professional
               portfolio through the platform.
             </motion.p>
+            </>
+
+            ) : (
+              <motion.div
+                role="status"
+                aria-live="polite"
+                initial={reduceMotion ? false : { opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.45 }}
+                className="py-8 sm:py-12"
+              >
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#D9A441]/25 bg-[#D9A441]/10 text-[#D9A441] shadow-[0_0_40px_rgba(217,164,65,0.10)]">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    className="h-8 w-8"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="5" width="18" height="14" rx="2.5" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="m4 7 8 6 8-6"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="m15.5 16.5 1.5 1.5 3-3"
+                    />
+                  </svg>
+                </div>
+
+                <p className="mt-8 text-sm font-medium uppercase tracking-[0.25em] text-[#D9A441]">
+                  One more step
+                </p>
+
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+                  Check your inbox
+                </h2>
+
+                <p className="mt-4 leading-7 text-white/60">
+                  If signup can proceed for this address, further instructions will be communicated by email.
+                </p>
+
+                <div className="mt-4 break-all rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-4 text-sm font-medium text-white">
+                  {verificationEmail}
+                </div>
+
+                <div className="mt-6 space-y-3 text-sm leading-6 text-white/50">
+                  <p>
+                    If you receive a verification email, select <span className="font-medium text-white/80">Verify email address</span> to activate your account.
+                  </p>
+                  <p>
+                    A verification link expires in 30 minutes and can only be used once.
+                  </p>
+                  <p>
+                    If you receive a message, check your spam or junk folder if it isn&apos;t in your inbox.
+                  </p>
+                </div>
+
+                {resendMessage && (
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    className="mt-5 rounded-xl border border-white/10 bg-white/[0.045] px-4 py-3 text-sm leading-6 text-white/70"
+                  >
+                    {resendMessage}
+                  </p>
+                )}
+
+                <LiquidLensSurface
+                  radius={14}
+                  intensity="subtle"
+                  className="mt-4 border border-white/15 bg-white/[0.045] transition-colors duration-300 hover:bg-white/[0.08]"
+                >
+                  <button
+                    type="button"
+                    onClick={handleResendVerification}
+                    disabled={resendLoading}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white/85 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {resendLoading ? (
+                      <>
+                        <span
+                          aria-hidden="true"
+                          className="h-4 w-4 animate-spin rounded-full border-2 border-white/25 border-t-white"
+                        />
+                        Sending verification email...
+                      </>
+                    ) : (
+                      "Resend verification email"
+                    )}
+                  </button>
+                </LiquidLensSurface>
+
+                <Link
+                  href="/login"
+                  className="mt-9 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-[#D9A441] px-6 py-3 text-sm font-semibold text-[#17130B] shadow-[0_8px_30px_rgba(217,164,65,0.16)] transition duration-300 hover:bg-[#E8B957] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D9A441] focus-visible:ring-offset-2 focus-visible:ring-offset-[#101116]"
+                >
+                  Continue to sign in
+                </Link>
+
+                <p className="mt-5 text-center text-xs leading-5 text-white/35">
+                  Your account will be ready after your email address has been verified.
+                </p>
+              </motion.div>
+            )}
           </div>
         </motion.section>
       </motion.div>

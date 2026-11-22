@@ -32,6 +32,8 @@ type Portfolio = {
   bio: string | null;
   profileImage: string | null;
   location: string | null;
+  timezone: string;
+  timezoneReviewRequired: boolean;
   phone: string | null;
   website: string | null;
   linkedin: string | null;
@@ -42,6 +44,7 @@ type Portfolio = {
   whatsapp: string | null;
   slug: string;
   published: boolean;
+  visibility: "PUBLIC" | "UNLISTED";
   template: string;
   theme: string;
   dashboardBackground: string | null;
@@ -54,6 +57,8 @@ const emptyPortfolio: Portfolio = {
   bio: "",
   profileImage: "",
   location: "",
+  timezone: "Africa/Nairobi",
+  timezoneReviewRequired: false,
   phone: "",
   website: "",
   linkedin: "",
@@ -64,6 +69,7 @@ const emptyPortfolio: Portfolio = {
   whatsapp: "",
   slug: "",
   published: false,
+  visibility: "PUBLIC",
   template: "professional",
   theme: "dark",
   dashboardBackground: "",
@@ -129,6 +135,8 @@ function normalizePortfolio(
     bio: data?.bio ?? "",
     profileImage: data?.profileImage ?? "",
     location: data?.location ?? "",
+    timezone: data?.timezone ?? "Africa/Nairobi",
+    timezoneReviewRequired: Boolean(data?.timezoneReviewRequired),
     phone: data?.phone ?? "",
     website: data?.website ?? "",
     linkedin: data?.linkedin ?? "",
@@ -139,6 +147,8 @@ function normalizePortfolio(
     whatsapp: data?.whatsapp ?? "",
     slug: data?.slug ?? "",
     published: Boolean(data?.published),
+    visibility:
+      data?.visibility === "UNLISTED" ? "UNLISTED" : "PUBLIC",
     template: data?.template ?? "professional",
     theme: data?.theme ?? "dark",
     dashboardBackground: data?.dashboardBackground ?? "",
@@ -249,6 +259,7 @@ export default function PortfolioEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [confirmTimezoneReview, setConfirmTimezoneReview] = useState(false);
   const [message, setMessage] = useState("");
 
   const [backgroundOptions, setBackgroundOptions] =
@@ -366,6 +377,21 @@ export default function PortfolioEditorPage() {
     };
   }, []);
 
+  async function refreshAvailableBackgrounds() {
+    setBackgroundsLoading(true);
+    setBackgroundsError("");
+    try {
+      const response = await fetch("/api/background-options", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Unable to load background presets.");
+      setBackgroundOptions(data.backgrounds ?? []);
+    } catch (error) {
+      setBackgroundsError(error instanceof Error ? error.message : "Unable to load background presets.");
+    } finally {
+      setBackgroundsLoading(false);
+    }
+  }
+
   function updateField(
     field: keyof Portfolio,
     value: string | boolean
@@ -392,6 +418,7 @@ export default function PortfolioEditorPage() {
         },
         body: JSON.stringify({
           ...portfolio,
+          timezoneReviewConfirmed: confirmTimezoneReview,
           ...(adminUserId ? { adminUserId } : {}),
         }),
       });
@@ -415,6 +442,7 @@ export default function PortfolioEditorPage() {
       setPortfolio(
         normalizePortfolio(data.portfolio)
       );
+      setConfirmTimezoneReview(false);
 
       setMessage(
         isAdminEditing
@@ -443,6 +471,7 @@ export default function PortfolioEditorPage() {
         body: JSON.stringify({
           ...portfolio,
           published: nextPublishedState,
+          timezoneReviewConfirmed: confirmTimezoneReview,
           ...(adminUserId ? { adminUserId } : {}),
         }),
       });
@@ -832,16 +861,47 @@ export default function PortfolioEditorPage() {
                   }`}
                 >
                   {portfolio.published
-                    ? "Published"
-                    : "Draft"}
+                    ? `Published · ${portfolio.visibility === "PUBLIC" ? "Public" : "Unlisted"}`
+                    : `Draft · ${portfolio.visibility === "PUBLIC" ? "Public" : "Unlisted"} when published`}
                 </motion.span>
               </div>
 
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/45">
-                {portfolio.published
-                  ? "Visitors can access this public portfolio using its portfolio address."
-                  : "This portfolio is saved privately. Publish it when it is ready for visitors to see it."}
-              </p>
+
+              <div className="mt-5 max-w-xl">
+                <label
+                  htmlFor="portfolio-visibility"
+                  className={labelClassName}
+                >
+                  Portfolio Visibility
+                </label>
+
+                <select
+                  id="portfolio-visibility"
+                  value={portfolio.visibility}
+                  onChange={(event) =>
+                    updateField(
+                      "visibility",
+                      event.target.value as "PUBLIC" | "UNLISTED"
+                    )
+                  }
+                  disabled={saving || publishing}
+                  className={selectClassName}
+                >
+                  <option value="PUBLIC">
+                    Public — Discoverable by everyone
+                  </option>
+
+                  <option value="UNLISTED">
+                    Anyone with the link — Unlisted
+                  </option>
+                </select>
+
+                <p className="mt-2 text-xs leading-5 text-white/45">
+                  {portfolio.visibility === "PUBLIC"
+                    ? "Your published portfolio is intended to be publicly discoverable and indexable by search engines."
+                    : "Your published portfolio can be accessed by anyone who has its exact link. It should not appear in search engines or public directories. This is not password protection."}
+                </p>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -1005,6 +1065,40 @@ export default function PortfolioEditorPage() {
                   className={inputClassName}
                   placeholder="City, Country"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="portfolio-timezone" className={labelClassName}>
+                  Booking timezone (IANA)
+                </label>
+                <input
+                  id="portfolio-timezone"
+                  value={portfolio.timezone}
+                  onChange={(event) => updateField("timezone", event.target.value)}
+                  className={inputClassName}
+                  placeholder="Africa/Nairobi"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="mt-2 text-xs leading-5 text-white/45">
+                  Use an IANA timezone such as Africa/Nairobi, Europe/London or America/New_York. This controls weekly availability and booking dates.
+                </p>
+                {portfolio.timezoneReviewRequired ? (
+                  <div className="mt-3 space-y-3">
+                    <p role="alert" className="text-sm text-amber-300">
+                      Your previous availability rules used conflicting or invalid timezones. Choose the timezone that should govern all future availability and bookings.
+                    </p>
+                    <label className="flex items-start gap-3 text-sm leading-6">
+                      <input
+                        type="checkbox"
+                        checked={confirmTimezoneReview}
+                        onChange={(event) => setConfirmTimezoneReview(event.target.checked)}
+                        className="mt-1 h-4 w-4 accent-amber-400"
+                      />
+                      <span>I have reviewed the existing schedule and confirm this is the correct timezone for future bookings.</span>
+                    </label>
+                  </div>
+                ) : null}
               </div>
 
               <div className="sm:col-span-2">
@@ -1242,6 +1336,9 @@ export default function PortfolioEditorPage() {
 
               {/* Dashboard background */}
               <div>
+                <button type="button" onClick={() => void refreshAvailableBackgrounds()} disabled={backgroundsLoading} className="mb-3 min-h-9 rounded-lg border border-white/10 px-3 text-xs text-white/60 transition hover:bg-white/[.05] disabled:opacity-50">
+                  {backgroundsLoading ? "Refreshing backgrounds…" : "Refresh available backgrounds"}
+                </button>
                 <label
                   htmlFor="dashboardBackground"
                   className={labelClassName}

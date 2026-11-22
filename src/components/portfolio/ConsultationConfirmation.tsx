@@ -10,6 +10,7 @@ type ConsultationConfirmationProps = {
   email: string;
   phone: string;
   reason: string;
+  submitting: boolean;
   onBack: () => void;
   onConfirm: () => void;
 };
@@ -23,6 +24,7 @@ export function ConsultationConfirmation({
   email,
   phone,
   reason,
+  submitting,
   onBack,
   onConfirm,
 }: ConsultationConfirmationProps) {
@@ -145,7 +147,8 @@ export function ConsultationConfirmation({
         <button
           type="button"
           onClick={onBack}
-          className="portfolio-secondary-button w-full"
+          disabled={submitting}
+          className="portfolio-secondary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
         >
           Edit Details
         </button>
@@ -153,9 +156,11 @@ export function ConsultationConfirmation({
         <button
           type="button"
           onClick={onConfirm}
-          className="portfolio-primary-button w-full"
+          disabled={submitting}
+          aria-busy={submitting}
+          className="portfolio-primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Request Consultation
+          {submitting ? "Submitting…" : "Request Consultation"}
         </button>
       </div>
     </div>

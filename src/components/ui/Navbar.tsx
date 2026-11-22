@@ -13,7 +13,6 @@ const links = [
   { label: "Learn", href: "/learn" },
   { label: "Solutions", href: "/solutions" },
   { label: "Markets", href: "/markets" },
-  { label: "Insights", href: "/insights" },
 ];
 
 const textScaleLabels: Record<number, string> = {
@@ -87,10 +86,10 @@ function ReaderTools() {
   };
 
   return (
-    <div className="navbar-reader-surface">
-      <div className="navbar-reader-heading">
+    <div className=" -reader-surface">
+      <div className=" -reader-heading">
         <div>
-          <span className="navbar-reader-kicker">
+          <span className=" -reader-kicker">
             Reader
           </span>
 
@@ -103,7 +102,7 @@ function ReaderTools() {
         </div>
       </div>
 
-      <p className="navbar-reader-description">
+      <p className=" -reader-description">
         Shape the reading experience around your eyes,
         your focus and your preferred way of learning.
       </p>
@@ -468,9 +467,9 @@ export function Navbar() {
     <header className="fixed left-0 right-0 top-0 z-50 px-4 pt-4">
       <nav
         className={[
-          "navbar-glass mx-auto max-w-7xl overflow-hidden",
+          " -glass mx-auto max-w-7xl overflow-hidden",
           open || readerOpen
-            ? "navbar-glass-expanded"
+            ? " -glass-expanded"
             : "",
         ].join(" ")}
       >
@@ -494,7 +493,7 @@ export function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="navbar-link"
+                className=" -link"
               >
                 {link.label}
               </Link>
@@ -507,9 +506,9 @@ export function Navbar() {
                 setOpen(false);
               }}
               className={[
-                "navbar-tool-button",
+                " -tool-button",
                 readerOpen
-                  ? "navbar-tool-button-active"
+                  ? " -tool-button-active"
                   : "",
               ].join(" ")}
               aria-label="Open reader tools"
@@ -520,18 +519,18 @@ export function Navbar() {
 
             <Link
               href="/login"
-              className="navbar-login"
+              className=" -login"
             >
               Login
             </Link>
 
             <Link
               href="/consultation"
-              className="navbar-cta"
+              className=" -cta"
             >
               <span>Book Consultation</span>
-              <span className="navbar-cta-arrow">
-                 
+              <span className=" -cta-arrow">
+
               </span>
             </Link>
           </div>
@@ -544,9 +543,9 @@ export function Navbar() {
                 setOpen(false);
               }}
               className={[
-                "navbar-tool-button",
+                " -tool-button",
                 readerOpen
-                  ? "navbar-tool-button-active"
+                  ? " -tool-button-active"
                   : "",
               ].join(" ")}
               aria-label="Reader tools"
@@ -562,9 +561,9 @@ export function Navbar() {
                 setReaderOpen(false);
               }}
               className={[
-                "navbar-menu-button",
+                " -menu-button",
                 open
-                  ? "navbar-menu-button-active"
+                  ? " -menu-button-active"
                   : "",
               ].join(" ")}
               aria-label="Toggle navigation"
@@ -572,18 +571,18 @@ export function Navbar() {
             >
               <span
                 className={[
-                  "navbar-menu-line",
+                  " -menu-line",
                   open
-                    ? "navbar-menu-line-top"
+                    ? " -menu-line-top"
                     : "",
                 ].join(" ")}
               />
 
               <span
                 className={[
-                  "navbar-menu-line",
+                  " -menu-line",
                   open
-                    ? "navbar-menu-line-bottom"
+                    ? " -menu-line-bottom"
                     : "",
                 ].join(" ")}
               />
@@ -592,12 +591,12 @@ export function Navbar() {
         </div>
 
         {open && (
-          <div className="navbar-waterfall">
-            <div className="navbar-waterfall-scroll">
-              <div className="navbar-waterfall-inner">
-                <div className="navbar-waterfall-label">
+          <div className=" -waterfall">
+            <div className=" -waterfall-scroll">
+              <div className=" -waterfall-inner">
+                <div className=" -waterfall-label">
                   <span>Navigate</span>
-                  <span className="navbar-waterfall-line" />
+                  <span className=" -waterfall-line" />
                 </div>
 
                 {links.map((link, index) => (
@@ -605,33 +604,33 @@ export function Navbar() {
                     key={link.href}
                     href={link.href}
                     onClick={() => setOpen(false)}
-                    className="navbar-waterfall-item"
+                    className=" -waterfall-item"
                     style={
                       {
                         "--waterfall-index": index,
                       } as React.CSSProperties
                     }
                   >
-                    <span className="navbar-waterfall-number">
+                    <span className=" -waterfall-number">
                       {String(index + 1).padStart(2, "0")}
                     </span>
 
-                    <span className="navbar-waterfall-title">
+                    <span className=" -waterfall-title">
                       {link.label}
                     </span>
 
-                    <span className="navbar-waterfall-arrow">
-                       
+                    <span className=" -waterfall-arrow">
+
                     </span>
                   </Link>
                 ))}
 
-                <div className="navbar-waterfall-divider" />
+                <div className=" -waterfall-divider" />
 
                 <Link
                   href="/login"
                   onClick={() => setOpen(false)}
-                  className="navbar-waterfall-secondary"
+                  className=" -waterfall-secondary"
                 >
                   Login
                 </Link>
@@ -639,7 +638,7 @@ export function Navbar() {
                 <Link
                   href="/consultation"
                   onClick={() => setOpen(false)}
-                  className="navbar-waterfall-consultation"
+                  className=" -waterfall-consultation"
                 >
                   <span>Book Consultation</span>
                   <span> </span>

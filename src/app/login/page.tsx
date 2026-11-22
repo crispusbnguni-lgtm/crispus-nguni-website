@@ -11,6 +11,9 @@ import {
   type Variants,
 } from "framer-motion";
 import { LiquidLensSurface } from "@/components/ui/LiquidLensSurface";
+import { useReader } from "@/components/ui/ReaderProvider";
+import { PhoneOtpPanel } from "@/components/auth/PhoneOtpPanel";
+import { startAuthentication } from "@simplewebauthn/browser";
 
 const cardVariants: Variants = {
   hidden: { opacity: 0, y: 20, scale: 0.99 },
@@ -41,13 +44,18 @@ const itemVariants: Variants = {
 
 export default function LoginPage() {
   const router = useRouter();
-  const reduceMotion = useReducedMotion();
+  const reader = useReader();
+  const reduceMotion = useReducedMotion() || reader.preferences.reduceMotion;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [magicLinkLoading, setMagicLinkLoading] = useState(false);
+  const [magicLinkMessage, setMagicLinkMessage] = useState("");
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyMessage, setPasskeyMessage] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -70,11 +78,123 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
+      if (data.pending === "enrollment") {
+        router.replace("/mfa/enroll");
+      } else if (data.pending === "mfa") {
+        router.replace("/mfa/challenge");
+      } else {
+        router.replace("/dashboard");
+      }
     } catch {
       setMessage("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleMagicLinkRequest() {
+    if (!email.trim() || magicLinkLoading) return;
+
+    setMagicLinkLoading(true);
+    setMagicLinkMessage("");
+
+    try {
+      const response = await fetch("/api/auth/magic-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setMagicLinkMessage(
+          data.message || "We could not process your request. Please try again.",
+        );
+        return;
+      }
+
+      setMagicLinkMessage(
+        data.message ||
+          "If this address is associated with a verified account, a secure sign-in link will be sent.",
+      );
+    } catch {
+      setMagicLinkMessage(
+        "We could not process your request. Check your connection and try again.",
+      );
+    } finally {
+      setMagicLinkLoading(false);
+    }
+  }
+  async function handlePasskeyLogin() {
+    if (passkeyLoading || loading || magicLinkLoading) return;
+
+    setPasskeyLoading(true);
+    setPasskeyMessage("");
+
+    try {
+      const optionsResponse = await fetch("/api/auth/passkey/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({}),
+      });
+
+      const optionsData = await optionsResponse.json();
+
+      if (
+        !optionsResponse.ok ||
+        !optionsData.success ||
+        !optionsData.options
+      ) {
+        setPasskeyMessage(
+          optionsData.message || "Unable to start passkey sign-in.",
+        );
+        return;
+      }
+
+      const authenticationResponse = await startAuthentication({
+        optionsJSON: optionsData.options,
+      });
+
+      const verifyResponse = await fetch("/api/auth/passkey/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ response: authenticationResponse }),
+      });
+
+      const verifyData = await verifyResponse.json();
+
+      if (!verifyResponse.ok || !verifyData.success) {
+        setPasskeyMessage(
+          verifyData.message || "Passkey sign-in failed.",
+        );
+        return;
+      }
+
+      if (verifyData.pending === "enrollment") {
+        router.replace("/mfa/enroll");
+      } else if (verifyData.pending === "mfa") {
+        router.replace("/mfa/challenge");
+      } else {
+        router.replace("/dashboard");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === "NotAllowedError") {
+        setPasskeyMessage(
+          "Passkey sign-in was cancelled or no available passkey was selected.",
+        );
+      } else {
+        setPasskeyMessage(
+          "Unable to sign in with a passkey. Please try again.",
+        );
+      }
+    } finally {
+      setPasskeyLoading(false);
     }
   }
 
@@ -440,7 +560,111 @@ export default function LoginPage() {
                       </span>
                     </motion.button>
                   </motion.div>
+                <motion.div
+                  variants={reduceMotion ? undefined : itemVariants}
+                  className="space-y-3 border-t border-white/10 pt-5"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="h-px flex-1 bg-white/10" />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/40">
+                      Or use passwordless sign-in
+                    </span>
+                    <span className="h-px flex-1 bg-white/10" />
+                  </div>
+
+                  <motion.button
+                    type="button"
+                    onClick={handlePasskeyLogin}
+                    disabled={passkeyLoading || loading || magicLinkLoading}
+                    whileHover={
+                      reduceMotion || passkeyLoading || loading || magicLinkLoading
+                        ? undefined
+                        : { y: -1 }
+                    }
+                    whileTap={
+                      reduceMotion || passkeyLoading || loading || magicLinkLoading
+                        ? undefined
+                        : { scale: 0.99 }
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[#5d9bff]/30 bg-[#126BFF]/[0.10] px-5 py-3.5 text-sm font-medium text-white backdrop-blur-xl transition-colors hover:border-[#5d9bff]/55 hover:bg-[#126BFF]/[0.16] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {passkeyLoading && (
+                      <motion.span
+                        aria-hidden="true"
+                        className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white"
+                        animate={reduceMotion ? undefined : { rotate: 360 }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      />
+                    )}
+                    {passkeyLoading
+                      ? "Waiting for your device..."
+                      : "Sign in with a passkey"}
+                  </motion.button>
+
+                  {passkeyMessage && (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-xl border border-[#5d9bff]/20 bg-[#126BFF]/[0.08] px-4 py-3 text-sm leading-6 text-blue-100/90"
+                    >
+                      {passkeyMessage}
+                    </p>
+                  )}
+
+                  <motion.button
+                    type="button"
+                    onClick={handleMagicLinkRequest}
+                    disabled={!email.trim() || magicLinkLoading}
+                    whileHover={
+                      reduceMotion || !email.trim() || magicLinkLoading
+                        ? undefined
+                        : { y: -1 }
+                    }
+                    whileTap={
+                      reduceMotion || !email.trim() || magicLinkLoading
+                        ? undefined
+                        : { scale: 0.99 }
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.055] px-5 py-3.5 text-sm font-medium text-white/85 backdrop-blur-xl transition-colors hover:border-[#5d9bff]/40 hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {magicLinkLoading && (
+                      <motion.span
+                        aria-hidden="true"
+                        className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white"
+                        animate={reduceMotion ? undefined : { rotate: 360 }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      />
+                    )}
+                    {magicLinkLoading
+                      ? "Requesting secure link..."
+                      : "Email me a secure sign-in link"}
+                  </motion.button>
+
+                  {magicLinkMessage && (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-xl border border-[#5d9bff]/20 bg-[#126BFF]/[0.08] px-4 py-3 text-sm leading-6 text-blue-100/90"
+                    >
+                      {magicLinkMessage}
+                    </p>
+                  )}
+
+                  <p className="text-center text-xs leading-5 text-white/40">
+                    Enter your email address above. We will send a one-time link if it is associated with a verified account.
+                  </p>
+                </motion.div>
                 </motion.form>
+
+                <PhoneOtpPanel intent="signin" />
 
                 <motion.p
                   variants={reduceMotion ? undefined : itemVariants}

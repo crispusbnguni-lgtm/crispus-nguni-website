@@ -25,21 +25,27 @@ export default function BackgroundsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadedBackgroundId, setUploadedBackgroundId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [imageSource, setImageSource] = useState<"UPLOAD" | "URL">("UPLOAD");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<string | null>(null);
 
   const loadBackgrounds = useCallback(async () => {
     setLoading(true);
+
     try {
       const response = await fetch("/api/admin/backgrounds", {
         cache: "no-store",
       });
+
       const data = await response.json();
+
       if (!response.ok) {
         throw new Error(data.message || "Could not load backgrounds.");
       }
+
       setBackgrounds(data.backgrounds || []);
     } catch (error) {
       setMessage(
@@ -51,47 +57,50 @@ export default function BackgroundsPage() {
   }, []);
 
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
-  async function load() {
-    try {
-      const response = await fetch("/api/admin/backgrounds", {
-        cache: "no-store",
-      });
+    async function load() {
+      try {
+        const response = await fetch("/api/admin/backgrounds", {
+          cache: "no-store",
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.message || "Could not load backgrounds.");
-      }
+        if (!response.ok) {
+          throw new Error(data.message || "Could not load backgrounds.");
+        }
 
-      if (!cancelled) {
-        setBackgrounds(data.backgrounds || []);
-      }
-    } catch (error) {
-      if (!cancelled) {
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Could not load backgrounds."
-        );
-      }
-    } finally {
-      if (!cancelled) {
-        setLoading(false);
+        if (!cancelled) {
+          setBackgrounds(data.backgrounds || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "Could not load backgrounds."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
-  }
 
-  void load();
+    void load();
 
-  return () => {
-    cancelled = true;
-  };
-}, []);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
-      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+      if (previewRef.current) {
+        URL.revokeObjectURL(previewRef.current);
+      }
     };
   }, []);
 
@@ -99,11 +108,13 @@ export default function BackgroundsPage() {
     event: React.ChangeEvent<HTMLInputElement>
   ) {
     const file = event.target.files?.[0];
+
     if (!file) return;
 
     setMessage("");
 
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+
     if (!allowedTypes.includes(file.type)) {
       setMessage("Choose a JPG, PNG, or WebP image.");
       event.target.value = "";
@@ -116,28 +127,41 @@ export default function BackgroundsPage() {
       return;
     }
 
-    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    if (previewRef.current) {
+      URL.revokeObjectURL(previewRef.current);
+    }
+
     const preview = URL.createObjectURL(file);
     previewRef.current = preview;
+
     setValue(preview);
     setUploading(true);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("name", name.trim() || file.name.replace(/\.[^.]+$/, ""));
+      formData.append("description", description);
+      formData.append("isDefault", String(isDefault));
+      formData.append("enabled", String(enabled));
 
       const response = await fetch("/api/admin/backgrounds/upload", {
         method: "POST",
         body: formData,
       });
+
       const data = await response.json();
 
-      if (!response.ok || !data.success || !data.url) {
+      if (!response.ok || !data.success || !data.url || !data.background?.id) {
         throw new Error(data.message || "Could not upload the image.");
       }
 
       setValue(data.url);
-      setMessage("Photo uploaded. Complete the form and add the background.");
+      setType("IMAGE");
+      setName(data.background.name);
+      setUploadedBackgroundId(data.background.id);
+      setMessage("Uploaded and added to the enabled backgrounds users can choose from. You can edit its details here.");
+      await loadBackgrounds();
     } catch (error) {
       setValue("");
       setMessage(
@@ -150,6 +174,7 @@ export default function BackgroundsPage() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setSaving(true);
     setMessage("");
 
@@ -162,9 +187,11 @@ export default function BackgroundsPage() {
         throw new Error("Upload a photo or enter a valid HTTPS image URL.");
       }
 
-      const response = await fetch("/api/admin/backgrounds", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch(uploadedBackgroundId ? `/api/admin/backgrounds/${encodeURIComponent(uploadedBackgroundId)}` : "/api/admin/backgrounds", {
+        method: uploadedBackgroundId ? "PATCH" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           name,
           type,
@@ -176,11 +203,13 @@ export default function BackgroundsPage() {
       });
 
       const data = await response.json();
+
       if (!response.ok) {
         throw new Error(data.message || "Could not save background.");
       }
 
-      setMessage("Background added successfully.");
+      setMessage(uploadedBackgroundId ? "Shared background updated successfully." : "Background added successfully.");
+      setUploadedBackgroundId(null);
       setName("");
       setDescription("");
       setType("COLOR");
@@ -189,7 +218,10 @@ export default function BackgroundsPage() {
       setIsDefault(false);
       setImageSource("UPLOAD");
 
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+
       if (previewRef.current) {
         URL.revokeObjectURL(previewRef.current);
         previewRef.current = null;
@@ -208,20 +240,63 @@ export default function BackgroundsPage() {
   const inputClass =
     "w-full rounded-xl border border-white/10 bg-[#0b1220] px-4 py-3 text-sm text-white outline-none focus:border-sky-400";
 
+  function clearImageSelection() {
+    if (uploadedBackgroundId) {
+      setMessage("This image is already published in the shared library. Disable or delete it from the library list to remove it for users.");
+      return;
+    }
+    setValue("");
+    setMessage("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    if (previewRef.current) {
+      URL.revokeObjectURL(previewRef.current);
+      previewRef.current = null;
+    }
+  }
+
+  function changeBackgroundType(nextType: "COLOR" | "IMAGE") {
+    if (uploadedBackgroundId) {
+      setMessage("This uploaded image is already published. Update its details or finish this form before adding another background.");
+      return;
+    }
+    setType(nextType);
+    setValue(nextType === "COLOR" ? "#05070D" : "");
+    setImageSource("UPLOAD");
+    setMessage("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    if (previewRef.current) {
+      URL.revokeObjectURL(previewRef.current);
+      previewRef.current = null;
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-[#05070D] px-4 py-8 text-white sm:px-8">
+    <main className="min-h-screen px-4 py-8 text-white sm:px-8">
       <div className="mx-auto max-w-6xl">
-        <a href="/admin" className="text-sm text-sky-400 hover:text-sky-300">
-            Back to Super Admin
+        <a
+          href="/admin"
+          className="text-sm text-sky-400 hover:text-sky-300"
+        >
+          Back to Super Admin
         </a>
 
         <div className="mb-8 mt-5">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-400">
             Design control
           </p>
+
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
             Background Library
           </h1>
+
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
             Manage the background options available across your portfolio
             platform. Upload photos or create custom colors.
@@ -231,6 +306,7 @@ export default function BackgroundsPage() {
         <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
           <section className="h-fit rounded-2xl border border-white/10 bg-white/[0.03] p-5">
             <h2 className="text-lg font-semibold">Add a background</h2>
+
             <p className="mb-5 mt-1 text-sm text-slate-400">
               Upload a photo from your computer or use an HTTPS image URL.
             </p>
@@ -240,6 +316,7 @@ export default function BackgroundsPage() {
                 <label className="mb-2 block text-sm text-slate-300">
                   Background name
                 </label>
+
                 <input
                   className={inputClass}
                   value={name}
@@ -254,25 +331,19 @@ export default function BackgroundsPage() {
                 <label className="mb-2 block text-sm text-slate-300">
                   Background type
                 </label>
+
                 <select
-  className={inputClass}
-  value={type ?? "COLOR"}
-  onChange={(event) => {
-    const nextType = event.target.value as "COLOR" | "IMAGE";
-    setType(nextType);
-    setValue(nextType === "COLOR" ? "#05070D" : "");
-    setImageSource("UPLOAD");
-    setMessage("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    if (previewRef.current) {
-      URL.revokeObjectURL(previewRef.current);
-      previewRef.current = null;
-    }
-  }}
->
-  <option value="COLOR">Solid color</option>
-  <option value="IMAGE">Photo background</option>
-</select>
+                  className={inputClass}
+                  value={type}
+                  onChange={(event) =>
+                    changeBackgroundType(
+                      event.target.value as "COLOR" | "IMAGE"
+                    )
+                  }
+                >
+                  <option value="COLOR">Solid color</option>
+                  <option value="IMAGE">Photo background</option>
+                </select>
               </div>
 
               {type === "COLOR" ? (
@@ -280,13 +351,19 @@ export default function BackgroundsPage() {
                   <label className="mb-2 block text-sm text-slate-300">
                     Choose color
                   </label>
+
                   <div className="flex gap-3">
                     <input
                       type="color"
-                      value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : "#05070D"}
+                      value={
+                        /^#[0-9a-fA-F]{6}$/.test(value)
+                          ? value
+                          : "#05070D"
+                      }
                       onChange={(event) => setValue(event.target.value)}
                       className="h-12 w-16 cursor-pointer rounded-lg border border-white/10 bg-transparent"
                     />
+
                     <input
                       className={inputClass}
                       value={value}
@@ -304,13 +381,7 @@ export default function BackgroundsPage() {
                       type="button"
                       onClick={() => {
                         setImageSource("UPLOAD");
-                        setValue("");
-                        setMessage("");
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                        if (previewRef.current) {
-                          URL.revokeObjectURL(previewRef.current);
-                          previewRef.current = null;
-                        }
+                        clearImageSelection();
                       }}
                       className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
                         imageSource === "UPLOAD"
@@ -320,17 +391,12 @@ export default function BackgroundsPage() {
                     >
                       Upload photo
                     </button>
+
                     <button
                       type="button"
                       onClick={() => {
                         setImageSource("URL");
-                        setValue("");
-                        setMessage("");
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                        if (previewRef.current) {
-                          URL.revokeObjectURL(previewRef.current);
-                          previewRef.current = null;
-                        }
+                        clearImageSelection();
                       }}
                       className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
                         imageSource === "URL"
@@ -347,6 +413,7 @@ export default function BackgroundsPage() {
                       <label className="mb-2 block text-sm text-slate-300">
                         Choose a photo (JPG, PNG, WebP; max 5 MB)
                       </label>
+
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -360,6 +427,7 @@ export default function BackgroundsPage() {
                       <label className="mb-2 block text-sm text-slate-300">
                         Image URL (HTTPS)
                       </label>
+
                       <input
                         className={inputClass}
                         type="url"
@@ -374,6 +442,7 @@ export default function BackgroundsPage() {
                   {value && (
                     <div>
                       <p className="mb-2 text-sm text-slate-300">Preview</p>
+
                       <div
                         className="h-36 rounded-xl border border-white/10 bg-cover bg-center"
                         style={{
@@ -384,7 +453,9 @@ export default function BackgroundsPage() {
                   )}
 
                   {uploading && (
-                    <p className="text-sm text-sky-300">Uploading photo...</p>
+                    <p className="text-sm text-sky-300">
+                      Uploading photo...
+                    </p>
                   )}
                 </div>
               )}
@@ -393,6 +464,7 @@ export default function BackgroundsPage() {
                 <label className="mb-2 block text-sm text-slate-300">
                   Description (optional)
                 </label>
+
                 <textarea
                   className={inputClass}
                   value={description}
@@ -431,12 +503,15 @@ export default function BackgroundsPage() {
                   ? "Uploading photo..."
                   : saving
                     ? "Saving..."
-                    : "Add background"}
+                    : uploadedBackgroundId ? "Update published background" : "Add background"}
               </button>
             </form>
 
             {message && (
-              <p role="status" className="mt-4 break-words text-sm text-sky-300">
+              <p
+                role="status"
+                className="mt-4 break-words text-sm text-sky-300"
+              >
                 {message}
               </p>
             )}
@@ -446,11 +521,13 @@ export default function BackgroundsPage() {
             <div className="mb-5 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Saved backgrounds</h2>
+
                 <p className="mt-1 text-sm text-slate-400">
                   {backgrounds.length} background
                   {backgrounds.length === 1 ? "" : "s"} in the library
                 </p>
               </div>
+
               <button
                 type="button"
                 onClick={() => void loadBackgrounds()}
@@ -467,6 +544,7 @@ export default function BackgroundsPage() {
             ) : backgrounds.length === 0 ? (
               <div className="rounded-xl border border-dashed border-white/10 px-5 py-12 text-center">
                 <p className="font-medium">Your library is empty</p>
+
                 <p className="mt-2 text-sm text-slate-400">
                   Add your first background using the form.
                 </p>
@@ -490,25 +568,32 @@ export default function BackgroundsPage() {
                             }
                       }
                     />
+
                     <div className="p-4">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-semibold">{background.name}</h3>
+                        <h3 className="font-semibold">
+                          {background.name}
+                        </h3>
+
                         {background.isDefault && (
                           <span className="rounded-full bg-sky-400/10 px-2 py-1 text-xs text-sky-300">
                             Default
                           </span>
                         )}
                       </div>
+
                       <p className="mt-2 break-all text-xs text-slate-400">
                         {background.type === "COLOR"
                           ? background.value
                           : "Image background"}
                       </p>
+
                       {background.description && (
                         <p className="mt-2 text-sm text-slate-400">
                           {background.description}
                         </p>
                       )}
+
                       <p className="mt-3 text-xs text-slate-500">
                         {background.enabled ? "Enabled" : "Disabled"}
                       </p>

@@ -1,7 +1,12 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
+
 import {
   AnimatePresence,
   motion,
@@ -28,7 +33,7 @@ const particles = Array.from({ length: 36 }, (_, i) => ({
 
 const easePremium = [0.22, 1, 0.36, 1] as const;
 
-function hasSeenIntro() {
+function hasSeenIntro(): boolean {
   try {
     return sessionStorage.getItem(INTRO_KEY) === "1";
   } catch {
@@ -36,35 +41,70 @@ function hasSeenIntro() {
   }
 }
 
-function markIntroSeen() {
+function markIntroSeen(): void {
   try {
     sessionStorage.setItem(INTRO_KEY, "1");
   } catch {
-    // The intro can finish without browser storage.
+    // The introduction can finish without browser storage.
   }
 }
 
+/**
+ * useSyncExternalStore subscription.
+ * This component only reads sessionStorage; it does not need
+ * an external subscription because completion is tracked locally.
+ */
+function subscribeIntro(): () => void {
+  return () => {};
+}
+
+/**
+ * Client snapshot.
+ * Returning a primitive string gives React a stable snapshot.
+ */
+function getIntroSnapshot(): "seen" | "new" {
+  return hasSeenIntro() ? "seen" : "new";
+}
+
+/**
+ * Server snapshot.
+ * "pending" ensures the server and initial hydration render match.
+ */
+function getServerIntroSnapshot(): "pending" {
+  return "pending";
+}
+
 export function OpportunityReveal() {
-  // These initial values must match on the server and first client render.
-  const [finished, setFinished] = useState(false);
-  const [introReady, setIntroReady] = useState(false);
+  // Read sessionStorage safely after hydration.
+  const introStatus = useSyncExternalStore(
+    subscribeIntro,
+    getIntroSnapshot,
+    getServerIntroSnapshot,
+  );
+
+  // Track completion without synchronously updating state in an effect.
+  const [completed, setCompleted] = useState(false);
+
+  // Track the current introduction stage.
   const [stage, setStage] = useState(-1);
 
   const shouldReduceMotion = useReducedMotion();
 
-  // Read sessionStorage only after hydration.
-  useEffect(() => {
-    setFinished(hasSeenIntro());
-    setIntroReady(true);
-  }, []);
+  const introReady = introStatus !== "pending";
+
+  const finished = introStatus === "seen" || completed;
 
   // Run the introduction only after checking whether it was already seen.
   useEffect(() => {
     if (!introReady || finished) return;
 
+    let isActive = true;
+
     const complete = () => {
+      if (!isActive) return;
+
       markIntroSeen();
-      setFinished(true);
+      setCompleted(true);
     };
 
     const mediaQuery = window.matchMedia(
@@ -73,18 +113,35 @@ export function OpportunityReveal() {
 
     if (mediaQuery.matches || shouldReduceMotion) {
       const timer = window.setTimeout(complete, 500);
-      return () => window.clearTimeout(timer);
+
+      return () => {
+        isActive = false;
+        window.clearTimeout(timer);
+      };
     }
 
     const timers = [
-      window.setTimeout(() => setStage(0), 700),
-      window.setTimeout(() => setStage(1), 1550),
-      window.setTimeout(() => setStage(2), 2400),
-      window.setTimeout(() => setStage(3), 3250),
+      window.setTimeout(() => {
+        if (isActive) setStage(0);
+      }, 700),
+
+      window.setTimeout(() => {
+        if (isActive) setStage(1);
+      }, 1550),
+
+      window.setTimeout(() => {
+        if (isActive) setStage(2);
+      }, 2400),
+
+      window.setTimeout(() => {
+        if (isActive) setStage(3);
+      }, 3250),
+
       window.setTimeout(complete, 6900),
     ];
 
     return () => {
+      isActive = false;
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [introReady, finished, shouldReduceMotion]);

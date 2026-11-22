@@ -1,5 +1,7 @@
+
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -9,12 +11,19 @@ datasource db {
 model User {
   id                            String                   @id @default(cuid())
   name                          String?
-  email                         String                   @unique
-  passwordHash                  String
+  email                         String?                  @unique
+  passwordHash                  String?
+  emailVerifiedAt               DateTime?
   role                          UserRole                 @default(USER)
+  accountStatus                 AdminAccountStatus       @default(ACTIVE)
+  accountStatusReason           String?
+  accountSuspendedUntil          DateTime?
+  verificationStatus            AdminVerificationStatus  @default(PENDING)
+  verificationReason            String?
   createdAt                     DateTime                 @default(now())
   updatedAt                     DateTime                 @updatedAt
   ownedLeads                    Lead[]                   @relation("LeadOwner")
+  createdLeads                   Lead[]                   @relation("LeadCreator")
   leadActivities                LeadActivity[]           @relation("ActivityUser")
   mediaUploads                  Media[]                  @relation("MediaUploader")
   portfolioSite                 PortfolioSite?
@@ -22,8 +31,1543 @@ model User {
   ownedConsultations            Consultation[]           @relation("ConsultationOwner")
   createdConsultationActivities ConsultationActivity[]   @relation("ConsultationActivityUser")
   notifications                 Notification[]
-  sessions  UserSession[] @relation("UserSessions")
-  auditLogs AuditLog[]    @relation("AuditLogActor")
+  sessions                      UserSession[]             @relation("UserSessions")
+  auditLogs                     AuditLog[]                @relation("AuditLogActor")
+  identities                    UserIdentity[]
+  emailActionTokens              EmailActionToken[]
+  passkeys                      PasskeyCredential[]
+  securitySettings              UserSecuritySettings?
+  totpCredential                TotpCredential?
+  recoveryCodes                 RecoveryCode[]
+  personalWorkspace             PersonalWorkspace?
+  nutritionProfileAccesses      NutritionProfileAccess[]
+
+  @@index([accountStatus, verificationStatus])
+}
+
+model PersonalWorkspace {
+  id                    String       @id @default(cuid())
+  userId                String       @unique
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode                  WorkspaceMode @default(CUSTOM)
+  focusAreas            String[]     @default([])
+  timezone              String       @default("Africa/Nairobi")
+  workingHoursStart     String       @default("09:00")
+  workingHoursEnd       String       @default("17:00")
+  breakMinutes          Int          @default(15)
+  weekStartsOn          Int          @default(1)
+  intelligencePermissions Json       @default("{}")
+  intelligenceDismissedIds String[]  @default([])
+  intelligenceFeedback Json          @default("{}")
+  revision              Int          @default(0)
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  pages                 WorkspacePage[]
+  mediaAssets           WorkspaceMediaAsset[]
+  tasks                 WorkspaceTask[]
+
+  taskTags WorkspaceTaskTag[]
+  projects WorkspaceProject[]
+  databases              WorkspaceDatabase[]
+  academicProfile        AcademicProfile?
+  academicYears          AcademicYear[]
+  academicCourses        AcademicCourse[]
+  academicActivities     AcademicActivity[]
+  classTimetableRules    AcademicClassTimetableRule[]
+  intelligenceMemories  WorkspaceIntelligenceMemory[]
+  financeTransactions   WorkspaceFinanceTransaction[]
+  financePositions      WorkspaceFinancePosition[]
+  financeBudgets        WorkspaceFinanceBudget[]
+  financeGoals          WorkspaceFinanceGoal[]
+  financeDebts          WorkspaceFinanceDebt[]
+  financeRecurringSchedules WorkspaceFinanceRecurringSchedule[]
+  financeReminders      WorkspaceFinanceReminder[]
+  financeEvents         WorkspaceFinanceEvent[]
+  nutritionProfiles     NutritionProfile[]
+  nutritionFoods        NutritionFood[]
+  nutritionRecipes      NutritionRecipe[]
+  nutritionMeals        NutritionMeal[]
+  nutritionHydrationEntries NutritionHydrationEntry[]
+  nutritionMeasurements NutritionBodyMeasurement[]
+  nutritionMealPlans   NutritionMealPlan[]
+  nutritionGroceryLists NutritionGroceryList[]
+  nutritionReminders    NutritionReminder[]
+  nutritionEvents       NutritionEvent[]
+  nutritionProfileAccesses NutritionProfileAccess[]
+  securityVault          SecurityVault?
+}
+
+enum WorkspaceIntelligenceMemoryKind {
+  PREFERENCE
+  GOAL
+  CONTEXT
+}
+
+enum WorkspaceFinanceRecordKind {
+  INCOME
+  EXPENSE
+  TRANSFER
+  SAVINGS_CONTRIBUTION
+  SAVINGS_WITHDRAWAL
+  DEBT_REPAYMENT
+  ASSET_ACQUISITION
+  ASSET_DISPOSAL
+}
+
+enum WorkspaceFinanceQuality {
+  ACTUAL
+  ESTIMATE
+  PLANNED
+}
+
+enum WorkspaceFinancePositionKind {
+  ASSET
+  LIABILITY
+}
+
+enum WorkspaceFinanceGoalStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum WorkspaceFinanceGoalMovementKind {
+  CONTRIBUTION
+  WITHDRAWAL
+}
+
+enum WorkspaceFinanceInterestType {
+  FIXED
+  VARIABLE
+  UNKNOWN
+}
+
+enum WorkspaceFinanceRepaymentFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+  IRREGULAR
+}
+
+enum WorkspaceFinanceRecurringFrequency {
+  WEEKLY
+  MONTHLY
+  ANNUAL
+}
+
+enum WorkspaceFinanceReminderKind {
+  BILL_PAYMENT
+  DEBT_REPAYMENT
+  SAVINGS_CONTRIBUTION
+  FINANCIAL_REVIEW
+  BUDGET_CHECK_IN
+}
+
+enum WorkspaceFinanceReminderStatus {
+  ACTIVE
+  COMPLETED
+  DISMISSED
+}
+
+enum NutritionProfileKind {
+  ADULT
+  CHILD
+  ADOLESCENT
+  PREGNANT
+  BREASTFEEDING
+  OLDER_ADULT
+  ATHLETE
+  HEALTH_CONDITION
+}
+
+enum NutritionReferenceSex {
+  FEMALE
+  MALE
+  NOT_RECORDED
+}
+
+enum NutritionActivityLevel {
+  LOW
+  MODERATE
+  HIGH
+  NOT_RECORDED
+}
+
+enum NutritionObjective {
+  BALANCED_EATING
+  WEIGHT_MAINTENANCE
+  HEALTHY_WEIGHT_GAIN
+  HEALTHY_WEIGHT_LOSS
+  SPORTS_FUELING
+  GENERAL_WELLBEING
+  NOT_RECORDED
+}
+
+enum NutritionFoodGroup {
+  FRUITS
+  VEGETABLES
+  CEREALS_WHOLE_GRAINS
+  ROOTS_TUBERS
+  LEGUMES_PULSES
+  MEAT_POULTRY
+  FISH_SEAFOOD
+  EGGS
+  MILK_DAIRY
+  NUTS_SEEDS
+  OILS_FATS
+  WATER_BEVERAGES
+  MIXED_MEAL
+  OTHER
+}
+
+enum NutritionDataQuality {
+  VERIFIED_SOURCE
+  ESTIMATED
+  USER_ENTERED
+  UNKNOWN
+}
+
+enum NutritionMealCategory {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+  OTHER
+}
+
+enum NutritionPlanStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum NutritionGroceryStatus {
+  NEEDED
+  PURCHASED
+  SKIPPED
+}
+
+enum NutritionReminderKind {
+  MEAL_PREPARATION
+  GROCERY_SHOPPING
+  MEAL_PLANNING
+  HYDRATION
+  NUTRITION_REVIEW
+  ANTENATAL_APPOINTMENT
+  OTHER
+}
+
+enum NutritionAccessRole {
+  VIEWER
+  CAREGIVER
+  EDITOR
+}
+
+model WorkspaceIntelligenceMemory {
+  id          String                          @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind        WorkspaceIntelligenceMemoryKind
+  label       String                          @db.VarChar(80)
+  content     String                          @db.VarChar(500)
+  enabled     Boolean                         @default(false)
+  createdAt   DateTime                        @default(now())
+  updatedAt   DateTime                        @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, enabled, updatedAt])
+}
+
+enum WorkspaceTaskStatus {
+  INBOX
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkspaceTaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum WorkspaceProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkspaceDatabasePropertyType {
+  TEXT
+  NUMBER
+  CHECKBOX
+  DATE
+  SELECT
+  MULTI_SELECT
+  URL
+  STATUS
+  RELATION
+}
+
+enum WorkspaceDatabaseViewType {
+  TABLE
+  BOARD
+}
+
+enum WorkspaceBlockType {
+  PARAGRAPH
+  HEADING
+  BULLETED_LIST
+  NUMBERED_LIST
+  CHECKLIST
+  TODO
+  QUOTE
+  CALLOUT
+  DIVIDER
+  CODE
+  TABLE
+  IMAGE
+  LINK
+  TOGGLE
+  PAGE_REFERENCE
+  DATE
+  REMINDER
+}
+
+enum WorkspaceReminderStatus {
+  SCHEDULED
+  DELIVERED
+  DISMISSED
+  CANCELLED
+}
+
+enum AcademicActivityKind {
+  ASSIGNMENT
+  EXAM
+  STUDY_SESSION
+}
+
+enum AcademicActivityStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AcademicSubmissionStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+}
+
+enum AcademicExamKind {
+  EXAM
+  QUIZ
+  PRACTICAL
+  ORAL
+  OTHER
+}
+
+enum AcademicClassExceptionKind {
+  CANCELLED
+  RESCHEDULED
+}
+
+model AcademicProfile {
+  id            String            @id @default(cuid())
+  workspaceId   String            @unique
+  workspace     PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "AcademicProfile_workspace_fkey")
+  institution   String?
+  program       String?
+  department    String?
+  revision      Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model AcademicYear {
+  id          String            @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "AcademicYear_workspace_fkey")
+  name        String
+  startsOn    DateTime          @db.Date
+  endsOn      DateTime          @db.Date
+  isCurrent   Boolean           @default(false)
+  archivedAt  DateTime?
+  revision    Int               @default(0)
+  terms       AcademicTerm[]
+  courses     AcademicCourse[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+  @@index([workspaceId, startsOn, endsOn], map: "AcademicYear_workspace_dates_idx")
+  @@unique([workspaceId], where: raw("\"isCurrent\" = true AND \"archivedAt\" IS NULL"), map: "AcademicYear_one_current_per_workspace_key")
+}
+
+model AcademicTerm {
+  id          String       @id @default(cuid())
+  workspaceId String
+  academicYearId String
+  academicYear AcademicYear @relation(fields: [workspaceId, academicYearId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicTerm_year_fkey")
+  name        String
+  startsOn    DateTime     @db.Date
+  endsOn      DateTime     @db.Date
+  isCurrent   Boolean      @default(false)
+  archivedAt  DateTime?
+  sortOrder   Int          @default(0)
+  revision    Int          @default(0)
+  courseLinks AcademicCourseTerm[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, academicYearId, id], map: "AcademicTerm_workspace_year_id_key")
+  @@unique([workspaceId, academicYearId, name], map: "AcademicTerm_workspace_year_name_key")
+  @@index([workspaceId, academicYearId, startsOn, endsOn], map: "AcademicTerm_workspace_year_dates_idx")
+  @@unique([workspaceId], where: raw("\"isCurrent\" = true AND \"archivedAt\" IS NULL"), map: "AcademicTerm_one_current_per_workspace_key")
+}
+
+model AcademicCourse {
+  id            String            @id @default(cuid())
+  workspaceId   String
+  academicYearId String
+  workspace     PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "AcademicCourse_workspace_fkey")
+  academicYear  AcademicYear      @relation(fields: [workspaceId, academicYearId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicCourse_year_fkey")
+  code          String?
+  name          String
+  description   String?
+  credits       Decimal?          @db.Decimal(6, 2)
+  color         String?
+  archivedAt    DateTime?
+  revision      Int               @default(0)
+  terms         AcademicCourseTerm[]
+  activities    AcademicActivity[]
+  timetableRules AcademicClassTimetableRule[]
+  knowledgeResources AcademicKnowledgeResource[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, academicYearId, id], map: "AcademicCourse_workspace_year_id_key")
+  @@unique([workspaceId, academicYearId, code], map: "AcademicCourse_workspace_year_code_key")
+  @@index([workspaceId, academicYearId, archivedAt, name], map: "AcademicCourse_workspace_year_archive_name_idx")
+}
+
+model AcademicCourseTerm {
+  workspaceId    String
+  academicYearId String
+  courseId       String
+  termId         String
+  course         AcademicCourse @relation(fields: [workspaceId, academicYearId, courseId], references: [workspaceId, academicYearId, id], onDelete: Cascade, map: "AcademicCourseTerm_course_fkey")
+  term           AcademicTerm   @relation(fields: [workspaceId, academicYearId, termId], references: [workspaceId, academicYearId, id], onDelete: Cascade, map: "AcademicCourseTerm_term_fkey")
+
+  @@id([workspaceId, courseId, termId])
+  @@index([workspaceId, academicYearId, termId], map: "AcademicCourseTerm_workspace_year_term_idx")
+}
+
+model AcademicActivity {
+  id          String                 @id @default(cuid())
+  workspaceId String
+  courseId    String
+  workspace   PersonalWorkspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "AcademicActivity_workspace_fkey")
+  course      AcademicCourse         @relation(fields: [workspaceId, courseId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicActivity_course_fkey")
+  kind        AcademicActivityKind
+  title       String
+  description String?
+  status      AcademicActivityStatus @default(PLANNED)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  dueOn       DateTime?              @db.Date
+  dueAt       DateTime?
+  timezone    String?
+  location    String?
+  archivedAt  DateTime?
+  revision    Int                    @default(0)
+  assignment  AcademicAssignment?
+  exam        AcademicExam?
+  studySession AcademicStudySession?
+  taskLinks   AcademicActivityTaskLink[]
+  projectLinks AcademicActivityProjectLink[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, courseId, kind, archivedAt, dueOn], map: "AcademicActivity_workspace_course_kind_archive_due_idx")
+  @@index([workspaceId, startsAt, endsAt], map: "AcademicActivity_workspace_start_end_idx")
+  @@index([workspaceId, dueAt, status], map: "AcademicActivity_workspace_due_status_idx")
+}
+
+model AcademicAssignment {
+  workspaceId String
+  activityId  String
+  activity    AcademicActivity       @relation(fields: [workspaceId, activityId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicAssignment_activity_fkey")
+  submissionStatus AcademicSubmissionStatus @default(NOT_STARTED)
+  submittedAt DateTime?
+  grade       String?
+  feedback    String?
+
+  @@id([workspaceId, activityId])
+}
+
+model AcademicExam {
+  workspaceId String
+  activityId  String
+  activity    AcademicActivity @relation(fields: [workspaceId, activityId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicExam_activity_fkey")
+  examKind    AcademicExamKind @default(EXAM)
+  venue       String?
+  topic       String?
+  score       Decimal?         @db.Decimal(8, 2)
+  maxScore    Decimal?         @db.Decimal(8, 2)
+
+  @@id([workspaceId, activityId])
+}
+
+model AcademicStudySession {
+  workspaceId String
+  activityId  String
+  activity    AcademicActivity @relation(fields: [workspaceId, activityId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicStudySession_activity_fkey")
+  goal        String?
+  topic       String?
+  progress    Int              @default(0)
+  completedAt DateTime?
+
+  @@id([workspaceId, activityId])
+}
+
+model AcademicActivityTaskLink {
+  workspaceId String
+  activityId  String
+  taskId      String
+  activity    AcademicActivity @relation(fields: [workspaceId, activityId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicActivityTaskLink_activity_fkey")
+  task        WorkspaceTask    @relation(fields: [workspaceId, taskId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicActivityTaskLink_task_fkey")
+  createdAt   DateTime         @default(now())
+
+  @@id([workspaceId, activityId, taskId])
+  @@index([workspaceId, taskId], map: "AcademicActivityTaskLink_workspace_task_idx")
+}
+
+model AcademicActivityProjectLink {
+  workspaceId String
+  activityId  String
+  projectId   String
+  activity    AcademicActivity @relation(fields: [workspaceId, activityId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicActivityProjectLink_activity_fkey")
+  project     WorkspaceProject @relation(fields: [workspaceId, projectId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicActivityProjectLink_project_fkey")
+  createdAt   DateTime         @default(now())
+
+  @@id([workspaceId, activityId, projectId])
+  @@index([workspaceId, projectId], map: "AcademicActivityProjectLink_workspace_project_idx")
+}
+
+model AcademicClassTimetableRule {
+  id          String            @id @default(cuid())
+  workspaceId String
+  courseId    String
+  workspace   PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "AcademicClassTimetableRule_workspace_fkey")
+  course      AcademicCourse    @relation(fields: [workspaceId, courseId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicClassTimetableRule_course_fkey")
+  title       String
+  weekdays    Int[]
+  startsOn    DateTime          @db.Date
+  endsOn      DateTime          @db.Date
+  localStart  String
+  localEnd    String
+  timezone    String
+  location    String?
+  archivedAt  DateTime?
+  revision    Int               @default(0)
+  exceptions  AcademicClassTimetableException[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, startsOn, endsOn, archivedAt], map: "AcademicClassTimetableRule_workspace_dates_idx")
+  @@index([workspaceId, courseId], map: "AcademicClassTimetableRule_workspace_course_idx")
+}
+
+model AcademicClassTimetableException {
+  id          String                   @id @default(cuid())
+  workspaceId String
+  ruleId      String
+  rule        AcademicClassTimetableRule @relation(fields: [workspaceId, ruleId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicClassTimetableException_rule_fkey")
+  occurrenceOn DateTime                @db.Date
+  kind        AcademicClassExceptionKind
+  startsAt    DateTime?
+  endsAt      DateTime?
+  timezone    String?
+  location    String?
+  revision    Int                      @default(0)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@unique([workspaceId, ruleId, occurrenceOn], map: "AcademicClassTimetableException_rule_date_key")
+  @@index([workspaceId, occurrenceOn], map: "AcademicClassTimetableException_workspace_date_idx")
+}
+
+model WorkspacePage {
+  id            String             @id @default(cuid())
+  workspaceId   String
+  workspace     PersonalWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parentId      String?
+  parent        WorkspacePage?     @relation("WorkspacePageTree", fields: [workspaceId, parentId], references: [workspaceId, id], onDelete: Cascade)
+  children      WorkspacePage[]    @relation("WorkspacePageTree")
+  title         String             @default("Untitled")
+  iconKey       String?
+  sortOrder     Int                @default(0)
+  isFavorite    Boolean            @default(false)
+  isPinned      Boolean            @default(false)
+  archivedAt   DateTime?
+  deletedAt     DateTime?
+  revision      Int                @default(0)
+  searchText    String             @default("")
+  coverAssetId  String?
+  coverAsset    WorkspaceMediaAsset? @relation("WorkspacePageCover", fields: [workspaceId, coverAssetId], references: [workspaceId, id], onDelete: Restrict)
+  blocks        WorkspaceBlock[]   @relation("WorkspacePageBlocks")
+  sourceRefs    WorkspacePageReference[] @relation("WorkspaceReferenceSource")
+  targetRefs    WorkspacePageReference[] @relation("WorkspaceReferenceTarget")
+  tasks         WorkspaceTask[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, parentId, sortOrder])
+  @@index([workspaceId, archivedAt, deletedAt, updatedAt])
+  @@index([workspaceId, isFavorite, updatedAt])
+  @@index([workspaceId, isPinned, updatedAt])
+  @@unique([workspaceId, sortOrder], where: raw("\"parentId\" IS NULL"), map: "WorkspacePage_root_order_key")
+  @@unique([workspaceId, parentId, sortOrder], where: raw("\"parentId\" IS NOT NULL"), map: "WorkspacePage_child_order_key")
+}
+
+model WorkspaceProject {
+  id                    String                        @id @default(cuid())
+  workspaceId           String
+  name                  String
+  description           String?
+  status                WorkspaceProjectStatus        @default(PLANNED)
+  priority              WorkspaceTaskPriority         @default(NORMAL)
+  startsAt              DateTime?
+  targetAt              DateTime?
+  archivedAt            DateTime?
+  revision              Int                           @default(0)
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
+  academicActivityLinks AcademicActivityProjectLink[]
+  workspace             PersonalWorkspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  milestones            WorkspaceProjectMilestone[]
+  tasks                 WorkspaceTask[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, archivedAt, updatedAt], map: "WorkspaceProject_workspace_status_archive_updated_idx")
+  @@index([workspaceId, targetAt], map: "WorkspaceProject_workspace_target_idx")
+}
+
+model WorkspaceProjectMilestone {
+  id          String           @id @default(cuid())
+  workspaceId String
+  projectId   String
+  title       String
+  description String?
+  targetAt    DateTime?
+  completedAt DateTime?
+  sortOrder   Int              @default(0)
+  revision    Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  project     WorkspaceProject @relation(fields: [workspaceId, projectId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceProjectMilestone_project_fkey")
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, projectId, completedAt, targetAt], map: "WorkspaceProjectMilestone_project_completion_target_idx")
+  @@index([workspaceId, projectId, sortOrder, id], map: "WorkspaceProjectMilestone_project_order_idx")
+}
+
+model WorkspaceTask {
+  id                    String                     @id @default(cuid())
+  workspaceId           String
+  parentTaskId          String?
+  projectId             String?
+  pageId                String?
+  title                 String
+  description           String?
+  status                WorkspaceTaskStatus        @default(INBOX)
+  priority              WorkspaceTaskPriority      @default(NORMAL)
+  startsAt              DateTime?
+  dueAt                 DateTime?
+  completedAt           DateTime?
+  archivedAt            DateTime?
+  notes                 String?
+  recurrenceRule        String?
+  sortOrder             Int                        @default(0)
+  revision              Int                        @default(0)
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  academicActivityLinks AcademicActivityTaskLink[]
+  financeReminders      WorkspaceFinanceReminder[]
+  page                  WorkspacePage?             @relation(fields: [workspaceId, pageId], references: [workspaceId, id], map: "WorkspaceTask_page_fkey")
+  parentTask            WorkspaceTask?             @relation("WorkspaceTaskTree", fields: [workspaceId, parentTaskId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceTask_parent_fkey")
+  subtasks              WorkspaceTask[]            @relation("WorkspaceTaskTree")
+  project               WorkspaceProject?          @relation(fields: [workspaceId, projectId], references: [workspaceId, id], map: "WorkspaceTask_project_fkey")
+  workspace             PersonalWorkspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "WorkspaceTask_workspace_fkey")
+  labels                WorkspaceTaskLabel[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, sortOrder], map: "WorkspaceTask_root_order_key", where: raw("(\"parentTaskId\" IS NULL)"))
+  @@unique([workspaceId, parentTaskId, sortOrder], map: "WorkspaceTask_child_order_key", where: raw("(\"parentTaskId\" IS NOT NULL)"))
+  @@index([workspaceId, dueAt, status], map: "WorkspaceTask_due_status_idx")
+  @@index([workspaceId, pageId], map: "WorkspaceTask_page_idx")
+  @@index([workspaceId, parentTaskId, sortOrder], map: "WorkspaceTask_parent_order_idx")
+  @@index([workspaceId, projectId, status, sortOrder], map: "WorkspaceTask_project_status_order_idx")
+  @@index([workspaceId, status, archivedAt, dueAt], map: "WorkspaceTask_workspace_status_archive_due_idx")
+}
+
+model WorkspaceTaskTag {
+  id          String               @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String?
+  createdAt   DateTime             @default(now())
+  tasks       WorkspaceTaskLabel[]
+  workspace   PersonalWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "WorkspaceTaskTag_workspace_fkey")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name], map: "WorkspaceTaskTag_workspace_name_key")
+}
+
+model WorkspaceTaskLabel {
+  workspaceId String
+  taskId      String
+  tagId       String
+  tag         WorkspaceTaskTag @relation(fields: [workspaceId, tagId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceTaskLabel_tag_fkey")
+  task        WorkspaceTask    @relation(fields: [workspaceId, taskId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceTaskLabel_task_fkey")
+
+  @@id([workspaceId, taskId, tagId])
+  @@index([workspaceId, tagId], map: "WorkspaceTaskLabel_tag_idx")
+}
+
+model WorkspaceDatabase {
+  id          String                      @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  archivedAt  DateTime?
+  revision    Int                         @default(0)
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
+  workspace   PersonalWorkspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade, map: "WorkspaceDatabase_workspace_fkey")
+  properties  WorkspaceDatabaseProperty[]
+  records     WorkspaceDatabaseRecord[]
+  views       WorkspaceDatabaseView[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, archivedAt, updatedAt], map: "WorkspaceDatabase_workspace_archive_updated_idx")
+}
+
+model WorkspaceDatabaseProperty {
+  id            String                        @id @default(cuid())
+  workspaceId   String
+  databaseId    String
+  name          String
+  type          WorkspaceDatabasePropertyType
+  options       Json                          @default("{}")
+  sortOrder     Int                           @default(0)
+  revision      Int                           @default(0)
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+  database      WorkspaceDatabase             @relation(fields: [workspaceId, databaseId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceDatabaseProperty_database_fkey")
+  relationLinks WorkspaceDatabaseRelation[]
+
+  @@unique([workspaceId, databaseId, name], map: "WorkspaceDatabaseProperty_name_key")
+  @@unique([workspaceId, databaseId, id], map: "WorkspaceDatabaseProperty_workspace_database_id_key")
+  @@index([workspaceId, databaseId, sortOrder], map: "WorkspaceDatabaseProperty_order_idx")
+}
+
+model WorkspaceDatabaseRecord {
+  id              String                      @id @default(cuid())
+  workspaceId     String
+  databaseId      String
+  data            Json                        @default("{}")
+  sortOrder       Int                         @default(0)
+  revision        Int                         @default(0)
+  archivedAt      DateTime?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  database        WorkspaceDatabase           @relation(fields: [workspaceId, databaseId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceDatabaseRecord_database_fkey")
+  sourceRelations WorkspaceDatabaseRelation[] @relation("WorkspaceRecordSource")
+  targetRelations WorkspaceDatabaseRelation[] @relation("WorkspaceRecordTarget")
+
+  @@unique([workspaceId, databaseId, id], map: "WorkspaceDatabaseRecord_workspace_database_id_key")
+  @@unique([workspaceId, id], map: "WorkspaceDatabaseRecord_workspace_id_key")
+  @@index([workspaceId, databaseId, archivedAt, sortOrder], map: "WorkspaceDatabaseRecord_order_idx")
+  @@index([workspaceId, databaseId, updatedAt], map: "WorkspaceDatabaseRecord_updated_idx")
+}
+
+model WorkspaceDatabaseRelation {
+  workspaceId      String
+  sourceDatabaseId String
+  sourceRecordId   String
+  propertyId       String
+  targetDatabaseId String
+  targetRecordId   String
+  property         WorkspaceDatabaseProperty @relation(fields: [workspaceId, sourceDatabaseId, propertyId], references: [workspaceId, databaseId, id], onDelete: Cascade, map: "WorkspaceDatabaseRelation_property_fkey")
+  sourceRecord     WorkspaceDatabaseRecord   @relation("WorkspaceRecordSource", fields: [workspaceId, sourceDatabaseId, sourceRecordId], references: [workspaceId, databaseId, id], onDelete: Cascade, map: "WorkspaceDatabaseRelation_source_fkey")
+  targetRecord     WorkspaceDatabaseRecord   @relation("WorkspaceRecordTarget", fields: [workspaceId, targetDatabaseId, targetRecordId], references: [workspaceId, databaseId, id], onDelete: Cascade, map: "WorkspaceDatabaseRelation_target_fkey")
+
+  @@id([workspaceId, sourceRecordId, propertyId, targetRecordId])
+  @@index([workspaceId, sourceDatabaseId, propertyId], map: "WorkspaceDatabaseRelation_property_idx")
+  @@index([workspaceId, targetDatabaseId, targetRecordId], map: "WorkspaceDatabaseRelation_target_idx")
+}
+
+model WorkspaceDatabaseView {
+  id            String                    @id @default(cuid())
+  workspaceId   String
+  databaseId    String
+  name          String
+  type          WorkspaceDatabaseViewType @default(TABLE)
+  configuration Json                      @default("{}")
+  sortOrder     Int                       @default(0)
+  revision      Int                       @default(0)
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  database      WorkspaceDatabase         @relation(fields: [workspaceId, databaseId], references: [workspaceId, id], onDelete: Cascade, map: "WorkspaceDatabaseView_database_fkey")
+
+  @@unique([workspaceId, databaseId, name], map: "WorkspaceDatabaseView_name_key")
+  @@unique([workspaceId, databaseId, id], map: "WorkspaceDatabaseView_workspace_database_id_key")
+  @@index([workspaceId, databaseId, sortOrder], map: "WorkspaceDatabaseView_order_idx")
+}
+
+model WorkspaceBlock {
+  id             String                 @id @default(cuid())
+  workspaceId    String
+  pageId         String
+  page           WorkspacePage          @relation("WorkspacePageBlocks", fields: [workspaceId, pageId], references: [workspaceId, id], onDelete: Cascade)
+  parentBlockId  String?
+  parentBlock    WorkspaceBlock?        @relation("WorkspaceBlockTree", fields: [workspaceId, pageId, parentBlockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  childBlocks    WorkspaceBlock[]       @relation("WorkspaceBlockTree")
+  type           WorkspaceBlockType
+  sortOrder      Int                    @default(0)
+  content        Json                   @default("{}") @db.JsonB
+  plainText      String                 @default("")
+  revision       Int                    @default(0)
+  mediaAssetId   String?
+  mediaAsset     WorkspaceMediaAsset?   @relation("WorkspaceBlockMedia", fields: [workspaceId, mediaAssetId], references: [workspaceId, id], onDelete: Restrict)
+  items          WorkspaceBlockItem[]
+  tableColumns   WorkspaceTableColumn[]
+  tableRows      WorkspaceTableRow[]
+  pageReference  WorkspacePageReference? @relation("WorkspaceReferenceBlock")
+  reminders      WorkspaceReminder[]
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@unique([workspaceId, pageId, id])
+  @@index([workspaceId, pageId, parentBlockId, sortOrder])
+  @@unique([workspaceId, pageId, sortOrder], where: raw("\"parentBlockId\" IS NULL"), map: "WorkspaceBlock_root_order_key")
+  @@unique([workspaceId, pageId, parentBlockId, sortOrder], where: raw("\"parentBlockId\" IS NOT NULL"), map: "WorkspaceBlock_child_order_key")
+}
+
+model WorkspaceBlockItem {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  pageId       String
+  blockId      String
+  block        WorkspaceBlock @relation(fields: [workspaceId, pageId, blockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  sortOrder    Int            @default(0)
+  text         String
+  checkedAt    DateTime?
+  dueAt        DateTime?
+  revision     Int            @default(0)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([workspaceId, pageId, blockId, sortOrder])
+  @@unique([workspaceId, pageId, blockId, id])
+}
+
+model WorkspaceTableColumn {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  pageId       String
+  blockId      String
+  block        WorkspaceBlock @relation(fields: [workspaceId, pageId, blockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  sortOrder    Int            @default(0)
+  label        String
+  width        Int?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  cells WorkspaceTableCell[] @relation("WorkspaceCellColumn")
+
+  @@unique([workspaceId, pageId, blockId, sortOrder])
+  @@unique([workspaceId, pageId, blockId, id])
+}
+
+model WorkspaceTableRow {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  pageId       String
+  blockId      String
+  block        WorkspaceBlock @relation(fields: [workspaceId, pageId, blockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  sortOrder    Int            @default(0)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  cells WorkspaceTableCell[] @relation("WorkspaceCellRow")
+
+  @@unique([workspaceId, pageId, blockId, sortOrder])
+  @@unique([workspaceId, pageId, blockId, id])
+}
+
+model WorkspaceTableCell {
+  id           String              @id @default(cuid())
+  workspaceId  String
+  pageId       String
+  blockId      String
+  rowId        String
+  columnId     String
+  row          WorkspaceTableRow   @relation("WorkspaceCellRow", fields: [workspaceId, pageId, blockId, rowId], references: [workspaceId, pageId, blockId, id], onDelete: Cascade)
+  column       WorkspaceTableColumn @relation("WorkspaceCellColumn", fields: [workspaceId, pageId, blockId, columnId], references: [workspaceId, pageId, blockId, id], onDelete: Cascade)
+  value        String              @default("")
+  revision     Int                 @default(0)
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([workspaceId, pageId, blockId, rowId, columnId])
+  @@index([workspaceId, pageId, blockId])
+}
+
+model WorkspacePageReference {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  sourcePageId  String
+  sourceBlockId String         @unique
+  targetPageId  String
+  sourcePage    WorkspacePage @relation("WorkspaceReferenceSource", fields: [workspaceId, sourcePageId], references: [workspaceId, id], onDelete: Cascade)
+  sourceBlock   WorkspaceBlock @relation("WorkspaceReferenceBlock", fields: [workspaceId, sourcePageId, sourceBlockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  targetPage    WorkspacePage @relation("WorkspaceReferenceTarget", fields: [workspaceId, targetPageId], references: [workspaceId, id], onDelete: Cascade)
+  createdAt     DateTime       @default(now())
+
+  @@index([workspaceId, targetPageId])
+  @@unique([workspaceId, sourcePageId, sourceBlockId])
+}
+
+model WorkspaceReminder {
+  id          String                  @id @default(cuid())
+  workspaceId String
+  pageId      String
+  blockId     String
+  block       WorkspaceBlock          @relation(fields: [workspaceId, pageId, blockId], references: [workspaceId, pageId, id], onDelete: Cascade)
+  remindAt    DateTime
+  timezone    String
+  status      WorkspaceReminderStatus @default(SCHEDULED)
+  deliveredAt DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@index([workspaceId, status, remindAt])
+  @@index([workspaceId, pageId, blockId])
+}
+
+model WorkspaceMediaAsset {
+  id          String            @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  objectKey   String
+  mimeType    String
+  byteSize    Int
+  width       Int?
+  height      Int?
+  createdAt   DateTime          @default(now())
+  coverPages  WorkspacePage[]   @relation("WorkspacePageCover")
+  blocks      WorkspaceBlock[]  @relation("WorkspaceBlockMedia")
+  financeAttachments WorkspaceFinanceAttachment[]
+  academicResources AcademicKnowledgeResource[]
+  nutritionFoodImages NutritionFood[] @relation("NutritionFoodImage")
+  nutritionMealPhotos NutritionMeal[] @relation("NutritionMealPhoto")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, objectKey])
+}
+
+// Vault labels, credentials and secure-note bodies exist only inside ciphertext.
+model SecurityVault {
+  id                       String                  @id @default(cuid())
+  workspaceId              String                  @unique
+  workspace                PersonalWorkspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  formatVersion            Int                     @default(1)
+  revision                 Int                     @default(0)
+  kdfAlgorithm             String                  @default("argon2id") @db.VarChar(16)
+  kdfMemoryKiB             Int                     @default(65536)
+  kdfIterations            Int                     @default(3)
+  kdfParallelism           Int                     @default(1)
+  masterSalt               String                  @db.VarChar(64)
+  masterNonce              String                  @db.VarChar(32)
+  masterWrappedDataKey     String                  @db.VarChar(128)
+  recoverySalt             String                  @db.VarChar(64)
+  recoveryNonce            String                  @db.VarChar(32)
+  recoveryWrappedDataKey   String                  @db.VarChar(128)
+  recoveryKeyVersion       Int                     @default(1)
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  records                  SecurityVaultRecord[]
+}
+
+model SecurityVaultRecord {
+  vaultId   String
+  id        String        @db.VarChar(80)
+  vault     SecurityVault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  nonce     String        @db.VarChar(32)
+  ciphertext String       @db.Text
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@id([vaultId, id])
+  @@index([vaultId, updatedAt])
+}
+
+model AcademicKnowledgeResource {
+  id            String             @id @default(cuid())
+  workspaceId   String
+  courseId      String
+  mediaAssetId  String
+  title         String
+  topic         String?
+  description   String?
+  searchableText String?           @db.Text
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  course        AcademicCourse     @relation(fields: [workspaceId, courseId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicKnowledgeResource_course_fkey")
+  mediaAsset    WorkspaceMediaAsset @relation(fields: [workspaceId, mediaAssetId], references: [workspaceId, id], onDelete: Cascade, map: "AcademicKnowledgeResource_media_fkey")
+
+  @@unique([workspaceId, id], map: "AcademicKnowledgeResource_workspace_id_key")
+  @@unique([workspaceId, mediaAssetId], map: "AcademicKnowledgeResource_workspace_media_key")
+  @@index([workspaceId, courseId, topic], map: "AcademicKnowledgeResource_workspace_course_topic_idx")
+}
+
+model WorkspaceFinanceTransaction {
+  id                  String                              @id @default(cuid())
+  workspaceId         String
+  workspace           PersonalWorkspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind                WorkspaceFinanceRecordKind
+  quality             WorkspaceFinanceQuality
+  amount              Decimal                             @db.Decimal(20, 4)
+  currency            String                              @db.Char(3)
+  occurredOn          DateTime                            @db.Date
+  label               String                              @db.VarChar(120)
+  category            String                              @db.VarChar(64)
+  subcategory         String?                             @db.VarChar(64)
+  paymentMethod       String?                             @db.VarChar(48)
+  description         String?                             @db.VarChar(500)
+  notes               String?                             @db.VarChar(2000)
+  fromAccount         String?                             @db.VarChar(80)
+  toAccount           String?                             @db.VarChar(80)
+  recurringScheduleId String?
+  recurringSchedule   WorkspaceFinanceRecurringSchedule?   @relation(fields: [workspaceId, recurringScheduleId], references: [workspaceId, id], onDelete: Restrict)
+  recurrenceOn        DateTime?                           @db.Date
+  goalMovement        WorkspaceFinanceGoalMovement?
+  debtPayment         WorkspaceFinanceDebtPayment?
+  attachments         WorkspaceFinanceAttachment[]
+  deletedAt           DateTime?
+  createdAt           DateTime                            @default(now())
+  updatedAt           DateTime                            @updatedAt
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, recurringScheduleId, recurrenceOn], where: raw("\"recurrenceOn\" IS NOT NULL"), map: "WorkspaceFinanceTransaction_recurring_occurrence_key")
+  @@index([workspaceId, occurredOn, currency, deletedAt])
+  @@index([workspaceId, kind, occurredOn, deletedAt])
+  @@index([workspaceId, category, occurredOn])
+}
+
+model WorkspaceFinanceAttachment {
+  id            String                      @id @default(cuid())
+  workspaceId   String
+  transactionId String
+  mediaAssetId  String
+  createdAt     DateTime                    @default(now())
+  mediaAsset    WorkspaceMediaAsset         @relation(fields: [workspaceId, mediaAssetId], references: [workspaceId, id])
+  transaction   WorkspaceFinanceTransaction @relation(fields: [workspaceId, transactionId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, transactionId, mediaAssetId], map: "WorkspaceFinanceAttachment_workspaceId_transactionId_mediaAsset")
+  @@index([workspaceId, transactionId, createdAt], map: "WorkspaceFinanceAttachment_workspaceId_transactionId_createdAt_")
+}
+
+model WorkspaceFinancePosition {
+  id          String                            @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind        WorkspaceFinancePositionKind
+  label       String                            @db.VarChar(120)
+  category    String                            @db.VarChar(64)
+  currency    String                            @db.Char(3)
+  value       Decimal                           @db.Decimal(20, 4)
+  quality     WorkspaceFinanceQuality
+  valuedOn    DateTime                          @db.Date
+  notes       String?                           @db.VarChar(2000)
+  archivedAt  DateTime?
+  revision    Int                               @default(0)
+  valuations  WorkspaceFinanceValuation[]
+  createdAt   DateTime                          @default(now())
+  updatedAt   DateTime                          @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, kind, archivedAt, currency])
+  @@index([workspaceId, valuedOn])
+}
+
+model WorkspaceFinanceValuation {
+  id          String                    @id @default(cuid())
+  workspaceId String
+  positionId  String
+  position    WorkspaceFinancePosition  @relation(fields: [workspaceId, positionId], references: [workspaceId, id], onDelete: Cascade)
+  value       Decimal                   @db.Decimal(20, 4)
+  quality     WorkspaceFinanceQuality
+  valuedOn    DateTime                  @db.Date
+  createdAt   DateTime                  @default(now())
+
+  @@index([workspaceId, positionId, valuedOn, id])
+}
+
+model WorkspaceFinanceBudget {
+  id          String             @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String             @db.VarChar(120)
+  category    String             @db.VarChar(64)
+  currency    String             @db.Char(3)
+  limitAmount Decimal            @db.Decimal(20, 4)
+  startsOn    DateTime           @db.Date
+  endsOn      DateTime           @db.Date
+  archivedAt  DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([workspaceId, name, category, currency, startsOn, endsOn])
+  @@index([workspaceId, startsOn, endsOn, currency, archivedAt])
+  @@index([workspaceId, category, currency, startsOn, endsOn])
+}
+
+model WorkspaceFinanceGoal {
+  id          String                        @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String                        @db.VarChar(120)
+  description String?                       @db.VarChar(1000)
+  currency    String                        @db.Char(3)
+  targetAmount Decimal                      @db.Decimal(20, 4)
+  currentAmount Decimal                     @default(0) @db.Decimal(20, 4)
+  targetOn    DateTime?                     @db.Date
+  status      WorkspaceFinanceGoalStatus   @default(ACTIVE)
+  movements   WorkspaceFinanceGoalMovement[]
+  createdAt   DateTime                      @default(now())
+  updatedAt   DateTime                      @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, targetOn, updatedAt])
+}
+
+model WorkspaceFinanceGoalMovement {
+  id            String                        @id @default(cuid())
+  workspaceId   String
+  goalId        String
+  goal          WorkspaceFinanceGoal         @relation(fields: [workspaceId, goalId], references: [workspaceId, id], onDelete: Cascade)
+  transactionId String                        @unique
+  transaction   WorkspaceFinanceTransaction  @relation(fields: [workspaceId, transactionId], references: [workspaceId, id], onDelete: Restrict)
+  kind          WorkspaceFinanceGoalMovementKind
+  amount        Decimal                       @db.Decimal(20, 4)
+  occurredOn    DateTime                      @db.Date
+  createdAt     DateTime                      @default(now())
+
+  @@index([workspaceId, goalId, occurredOn, id])
+  @@unique([workspaceId, transactionId])
+}
+
+model WorkspaceFinanceDebt {
+  id                  String                             @id @default(cuid())
+  workspaceId         String
+  workspace           PersonalWorkspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                String                             @db.VarChar(120)
+  lenderDescription   String?                            @db.VarChar(160)
+  currency            String                             @db.Char(3)
+  originalPrincipal   Decimal                            @db.Decimal(20, 4)
+  outstandingBalance  Decimal                            @db.Decimal(20, 4)
+  annualInterestRate  Decimal?                           @db.Decimal(9, 6)
+  interestType        WorkspaceFinanceInterestType       @default(UNKNOWN)
+  repaymentFrequency  WorkspaceFinanceRepaymentFrequency @default(IRREGULAR)
+  repaymentAmount     Decimal?                           @db.Decimal(20, 4)
+  nextDueOn           DateTime?                          @db.Date
+  notes               String?                            @db.VarChar(2000)
+  archivedAt          DateTime?
+  payments            WorkspaceFinanceDebtPayment[]
+  createdAt           DateTime                           @default(now())
+  updatedAt           DateTime                           @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, archivedAt, currency])
+  @@index([workspaceId, nextDueOn])
+}
+
+model WorkspaceFinanceDebtPayment {
+  id             String                        @id @default(cuid())
+  workspaceId    String
+  debtId         String
+  debt           WorkspaceFinanceDebt         @relation(fields: [workspaceId, debtId], references: [workspaceId, id], onDelete: Cascade)
+  transactionId  String                        @unique
+  transaction    WorkspaceFinanceTransaction  @relation(fields: [workspaceId, transactionId], references: [workspaceId, id], onDelete: Restrict)
+  principalAmount Decimal                      @db.Decimal(20, 4)
+  interestAmount Decimal                       @db.Decimal(20, 4)
+  occurredOn     DateTime                      @db.Date
+  createdAt      DateTime                      @default(now())
+
+  @@index([workspaceId, debtId, occurredOn, id])
+  @@unique([workspaceId, transactionId])
+}
+
+model WorkspaceFinanceRecurringSchedule {
+  id           String                             @id @default(cuid())
+  workspaceId  String
+  workspace    PersonalWorkspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind         WorkspaceFinanceRecordKind
+  quality      WorkspaceFinanceQuality            @default(PLANNED)
+  amount       Decimal                            @db.Decimal(20, 4)
+  currency     String                             @db.Char(3)
+  label        String                             @db.VarChar(120)
+  category     String                             @db.VarChar(64)
+  frequency    WorkspaceFinanceRecurringFrequency
+  interval     Int                                @default(1)
+  nextOn       DateTime                           @db.Date
+  fromAccount  String?                            @db.VarChar(80)
+  toAccount    String?                            @db.VarChar(80)
+  active       Boolean                            @default(true)
+  transactions WorkspaceFinanceTransaction[]
+  createdAt    DateTime                           @default(now())
+  updatedAt    DateTime                           @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, active, nextOn])
+}
+
+model WorkspaceFinanceReminder {
+  id          String                             @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        WorkspaceTask?                     @relation(fields: [workspaceId, taskId], references: [workspaceId, id], onDelete: Restrict)
+  kind        WorkspaceFinanceReminderKind
+  title       String                             @db.VarChar(120)
+  remindAt    DateTime
+  timezone    String                             @db.VarChar(80)
+  status      WorkspaceFinanceReminderStatus     @default(ACTIVE)
+  createdAt   DateTime                           @default(now())
+  updatedAt   DateTime                           @updatedAt
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, remindAt])
+}
+
+model WorkspaceFinanceEvent {
+  id          String             @id @default(cuid())
+  workspaceId String
+  workspace   PersonalWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  action      String             @db.VarChar(48)
+  targetType  String             @db.VarChar(48)
+  targetId    String             @db.VarChar(128)
+  changedFields String[]         @default([])
+  createdAt   DateTime           @default(now())
+
+  @@index([workspaceId, targetType, targetId, createdAt])
+  @@index([workspaceId, action, createdAt])
+}
+
+model NutritionProfile {
+  id                  String                 @id @default(cuid())
+  workspaceId         String
+  workspace           PersonalWorkspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  displayName         String                 @db.VarChar(100)
+  kind                NutritionProfileKind   @default(ADULT)
+  birthDate           DateTime?              @db.Date
+  referenceSex        NutritionReferenceSex  @default(NOT_RECORDED)
+  activityLevel       NutritionActivityLevel @default(NOT_RECORDED)
+  objective           NutritionObjective     @default(NOT_RECORDED)
+  pregnant            Boolean                @default(false)
+  pregnancyTrimester  Int?
+  breastfeeding       Boolean                @default(false)
+  dietaryPreferences  String[]               @default([])
+  culturalPreferences String[]               @default([])
+  allergies           String[]               @default([])
+  intolerances        String[]               @default([])
+  healthCircumstances String[]               @default([])
+  notes               String?                @db.VarChar(2000)
+  archivedAt          DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  meals               NutritionMeal[]
+  hydrationEntries    NutritionHydrationEntry[]
+  measurements        NutritionBodyMeasurement[]
+  mealPlans           NutritionMealPlan[]
+  groceryLists        NutritionGroceryList[]
+  reminders           NutritionReminder[]
+  accesses            NutritionProfileAccess[]
+  @@unique([workspaceId, id])
+  @@index([workspaceId, archivedAt, displayName])
+}
+
+model NutritionProfileAccess {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  profileId       String
+  memberUserId    String
+  role            NutritionAccessRole
+  canViewHealth   Boolean               @default(false)
+  canManageProfile Boolean              @default(false)
+  canManageMeals  Boolean               @default(false)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  workspace       PersonalWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile         NutritionProfile      @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  member          User                  @relation(fields: [memberUserId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, profileId, memberUserId])
+  @@index([memberUserId, profileId])
+}
+
+model NutritionFood {
+  id             String             @id @default(cuid())
+  workspaceId    String
+  workspace      PersonalWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name           String             @db.VarChar(120)
+  group          NutritionFoodGroup
+  description    String?            @db.VarChar(500)
+  servingLabel   String?            @db.VarChar(80)
+  imageAssetId   String?
+  imageAsset     WorkspaceMediaAsset? @relation("NutritionFoodImage", fields: [workspaceId, imageAssetId], references: [workspaceId, id], onDelete: Restrict)
+  calories       Decimal?           @db.Decimal(12, 3)
+  proteinGrams   Decimal?           @db.Decimal(12, 3)
+  carbohydrateGrams Decimal?        @db.Decimal(12, 3)
+  fatGrams       Decimal?           @db.Decimal(12, 3)
+  fibreGrams     Decimal?           @db.Decimal(12, 3)
+  micronutrients Json?
+  allergens      String[]           @default([])
+  ingredients    String[]           @default([])
+  preparation    String?            @db.VarChar(2000)
+  dataQuality    NutritionDataQuality @default(UNKNOWN)
+  sourceName     String?            @db.VarChar(160)
+  sourceUrl      String?            @db.VarChar(1000)
+  archivedAt     DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  recipeIngredients NutritionRecipeIngredient[]
+  mealEntries    NutritionMealEntry[]
+  planItems      NutritionMealPlanItem[]
+  groceryItems   NutritionGroceryListItem[]
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+  @@index([workspaceId, group, archivedAt, name])
+}
+
+model NutritionRecipe {
+  id           String             @id @default(cuid())
+  workspaceId  String
+  workspace    PersonalWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name         String             @db.VarChar(120)
+  description  String?            @db.VarChar(1000)
+  instructions String?            @db.VarChar(5000)
+  servings     Decimal?           @db.Decimal(8, 2)
+  imageAssetId String?
+  archivedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  ingredients  NutritionRecipeIngredient[]
+  mealEntries  NutritionMealEntry[]
+  planItems    NutritionMealPlanItem[]
+  @@unique([workspaceId, id])
+  @@index([workspaceId, archivedAt, name])
+}
+
+model NutritionRecipeIngredient {
+  id          String            @id @default(cuid())
+  workspaceId String
+  recipeId    String
+  foodId      String
+  quantity    Decimal           @db.Decimal(12, 3)
+  unit        String            @db.VarChar(40)
+  sortOrder   Int               @default(0)
+  recipe      NutritionRecipe   @relation(fields: [workspaceId, recipeId], references: [workspaceId, id], onDelete: Cascade)
+  food        NutritionFood     @relation(fields: [workspaceId, foodId], references: [workspaceId, id], onDelete: Restrict)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, recipeId, sortOrder])
+}
+
+model NutritionMeal {
+  id            String                @id @default(cuid())
+  workspaceId   String
+  profileId     String
+  category      NutritionMealCategory
+  title         String?               @db.VarChar(160)
+  consumedAt    DateTime
+  timezone      String                @default("Africa/Nairobi") @db.VarChar(80)
+  notes         String?               @db.VarChar(2000)
+  preparedBy    String?               @db.VarChar(100)
+  imageAssetId  String?
+  workspace     PersonalWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile       NutritionProfile      @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  imageAsset    WorkspaceMediaAsset?  @relation("NutritionMealPhoto", fields: [workspaceId, imageAssetId], references: [workspaceId, id], onDelete: Restrict)
+  entries       NutritionMealEntry[]
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, consumedAt, id])
+}
+
+model NutritionMealEntry {
+  id                 String           @id @default(cuid())
+  workspaceId        String
+  mealId             String
+  foodId             String?
+  recipeId           String?
+  labelSnapshot      String           @db.VarChar(160)
+  quantity           Decimal          @db.Decimal(12, 3)
+  unit               String           @db.VarChar(40)
+  caloriesSnapshot   Decimal?         @db.Decimal(12, 3)
+  proteinSnapshot    Decimal?         @db.Decimal(12, 3)
+  carbohydrateSnapshot Decimal?        @db.Decimal(12, 3)
+  fatSnapshot        Decimal?         @db.Decimal(12, 3)
+  fibreSnapshot      Decimal?         @db.Decimal(12, 3)
+  dataQuality        NutritionDataQuality @default(UNKNOWN)
+  meal               NutritionMeal     @relation(fields: [workspaceId, mealId], references: [workspaceId, id], onDelete: Cascade)
+  food               NutritionFood?    @relation(fields: [workspaceId, foodId], references: [workspaceId, id], onDelete: Restrict)
+  recipe             NutritionRecipe?  @relation(fields: [workspaceId, recipeId], references: [workspaceId, id], onDelete: Restrict)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, mealId, id])
+}
+
+model NutritionHydrationEntry {
+  id          String            @id @default(cuid())
+  workspaceId String
+  profileId   String
+  amountMl    Int
+  recordedAt  DateTime
+  workspace   PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile     NutritionProfile  @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, recordedAt])
+}
+
+model NutritionBodyMeasurement {
+  id          String            @id @default(cuid())
+  workspaceId String
+  profileId   String
+  measuredOn  DateTime          @db.Date
+  weightKg    Decimal?          @db.Decimal(8, 3)
+  heightCm    Decimal?          @db.Decimal(7, 2)
+  waistCm     Decimal?          @db.Decimal(7, 2)
+  notes       String?           @db.VarChar(1000)
+  workspace   PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile     NutritionProfile  @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, measuredOn, id])
+}
+
+model NutritionMealPlan {
+  id          String              @id @default(cuid())
+  workspaceId String
+  profileId   String
+  title       String              @db.VarChar(120)
+  startsOn    DateTime            @db.Date
+  endsOn      DateTime            @db.Date
+  status      NutritionPlanStatus @default(DRAFT)
+  workspace   PersonalWorkspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile     NutritionProfile    @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  items       NutritionMealPlanItem[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, status, startsOn])
+}
+
+model NutritionMealPlanItem {
+  id          String                @id @default(cuid())
+  workspaceId String
+  planId      String
+  foodId      String?
+  recipeId    String?
+  category    NutritionMealCategory
+  scheduledAt DateTime
+  label       String                @db.VarChar(160)
+  notes       String?               @db.VarChar(1000)
+  plan        NutritionMealPlan     @relation(fields: [workspaceId, planId], references: [workspaceId, id], onDelete: Cascade)
+  food        NutritionFood?        @relation(fields: [workspaceId, foodId], references: [workspaceId, id], onDelete: Restrict)
+  recipe      NutritionRecipe?      @relation(fields: [workspaceId, recipeId], references: [workspaceId, id], onDelete: Restrict)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, planId, scheduledAt, id])
+}
+
+model NutritionGroceryList {
+  id          String                 @id @default(cuid())
+  workspaceId String
+  profileId   String
+  title       String                 @db.VarChar(120)
+  reusable    Boolean                @default(false)
+  archivedAt  DateTime?
+  workspace   PersonalWorkspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile     NutritionProfile       @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  items       NutritionGroceryListItem[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, archivedAt, updatedAt])
+}
+
+model NutritionGroceryListItem {
+  id           String                 @id @default(cuid())
+  workspaceId  String
+  listId       String
+  foodId       String?
+  name         String                 @db.VarChar(160)
+  category     String?                @db.VarChar(80)
+  quantity     Decimal?               @db.Decimal(12, 3)
+  unit         String?                @db.VarChar(40)
+  estimatedCost Decimal?              @db.Decimal(12, 2)
+  currency     String?                @db.Char(3)
+  status       NutritionGroceryStatus @default(NEEDED)
+  notes        String?                @db.VarChar(500)
+  sortOrder    Int                    @default(0)
+  list         NutritionGroceryList   @relation(fields: [workspaceId, listId], references: [workspaceId, id], onDelete: Cascade)
+  food         NutritionFood?         @relation(fields: [workspaceId, foodId], references: [workspaceId, id], onDelete: Restrict)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, listId, status, sortOrder])
+}
+
+model NutritionReminder {
+  id          String               @id @default(cuid())
+  workspaceId String
+  profileId   String
+  kind        NutritionReminderKind
+  title       String               @db.VarChar(160)
+  remindAt    DateTime
+  timezone    String               @db.VarChar(80)
+  dismissedAt DateTime?
+  workspace   PersonalWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile     NutritionProfile     @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Cascade)
+  createdAt   DateTime             @default(now())
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, dismissedAt, remindAt])
+}
+
+model NutritionEvent {
+  id           String            @id @default(cuid())
+  workspaceId  String
+  action       String            @db.VarChar(48)
+  targetType   String            @db.VarChar(48)
+  targetId     String            @db.VarChar(128)
+  changedFields String[]         @default([])
+  createdAt    DateTime          @default(now())
+  workspace    PersonalWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, targetType, targetId, createdAt])
 }
 
 model PortfolioSite {
@@ -34,6 +1578,8 @@ model PortfolioSite {
   bio                    String?
   profileImage           String?
   location               String?
+  timezone               String                 @default("Africa/Nairobi")
+  timezoneReviewRequired Boolean                @default(false)
   phone                  String?
   website                String?
   linkedin               String?
@@ -42,12 +1588,14 @@ model PortfolioSite {
   youtube                String?
   tiktok                 String?
   whatsapp               String?
- 
+
   template               String                 @default("professional")
   theme                  String                 @default("dark")
   dashboardBackground    String?
   websiteBackground      String?
   published              Boolean                @default(false)
+  visibility             PortfolioVisibility    @default(PUBLIC)
+
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   slug                   String                 @unique
@@ -61,6 +1609,7 @@ model PortfolioSite {
   showServices           Boolean                @default(true)
   showSkills             Boolean                @default(true)
   showTestimonials       Boolean                @default(true)
+
   education              Education[]
   experiences            Experience[]
   insights               Insight[]
@@ -82,16 +1631,26 @@ model Lead {
   id              String            @id @default(cuid())
   portfolioId     String
   ownerId         String?
+  createdById     String?
   name            String
   email           String?
-  phone           String?
+  emailNormalized String?
+  phone            String?
+  phoneNormalized String?
   company         String?
   location        String?
   message         String?
   source          LeadSource        @default(WEBSITE)
+  origin          LeadOrigin        @default(LEGACY)
+  sourceDetail    String?
   temperature     LeadTemperature   @default(COLD)
+  temperatureOverride Boolean       @default(true)
   status          LeadStatus        @default(NEW)
   score           Int               @default(0)
+  scoreBreakdown  Json?
+  nextBestAction  String?
+  scoreCalculatedAt DateTime?
+  nextScoreRefreshAt DateTime?
   interestedIn    String?
   budget          String?
   timeline        String?
@@ -103,17 +1662,39 @@ model Lead {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   owner           User?             @relation("LeadOwner", fields: [ownerId], references: [id])
+  creator         User?             @relation("LeadCreator", fields: [createdById], references: [id], onDelete: SetNull)
   portfolio       PortfolioSite     @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
   activities      LeadActivity[]
   consultations   Consultation[]
+  scoreHistory    LeadScoreHistory[]
 
   @@index([portfolioId])
   @@index([ownerId])
+  @@index([createdById])
+  @@index([portfolioId, nextScoreRefreshAt])
+  @@unique([portfolioId, emailNormalized])
+  @@unique([portfolioId, phoneNormalized])
   @@index([status])
   @@index([temperature])
   @@index([source])
   @@index([score])
   @@index([nextFollowUpAt])
+}
+
+model LeadScoreHistory {
+  id              String   @id @default(cuid())
+  leadId          String
+  totalScore      Int
+  fitScore        Int
+  intentScore     Int
+  engagementScore Int
+  recencyScore    Int
+  reasons         Json
+  nextBestAction  String
+  createdAt       DateTime @default(now())
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
 }
 
 model LeadActivity {
@@ -364,6 +1945,7 @@ model AvailabilityRule {
   @@index([enabled])
 }
 
+
 model AvailabilityException {
   id          String                    @id @default(cuid())
   portfolioId String
@@ -381,10 +1963,12 @@ model AvailabilityException {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([portfolioId, date])
   @@index([portfolioId])
   @@index([date])
   @@index([type])
 }
+
 
 model Consultation {
   id          String        @id @default(cuid())
@@ -491,6 +2075,31 @@ enum UserRole {
   USER
 }
 
+enum WorkspaceMode {
+  STUDENT
+  PROFESSIONAL
+  ENTREPRENEUR
+  PERSONAL
+  CUSTOM
+}
+
+enum AdminAccountStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum AdminVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum PortfolioVisibility {
+  PUBLIC
+  UNLISTED
+}
+
 enum LeadTemperature {
   HOT
   WARM
@@ -519,7 +2128,18 @@ enum LeadSource {
   MANUAL
   EMAIL
   ADVERTISEMENT
+  SOCIAL_MEDIA
+  EVENT
+  WALK_IN
+  CAMPAIGN
   OTHER
+}
+
+enum LeadOrigin {
+  MANUAL_ENTRY
+  WEBSITE_FORM
+  PUBLIC_CONSULTATION
+  LEGACY
 }
 
 enum LeadActivityType {
@@ -572,6 +2192,7 @@ enum NotificationType {
   FOLLOW_UP_DUE
   SYSTEM
 }
+
 model BackgroundOption {
   id          String   @id @default(cuid())
   name        String
@@ -585,7 +2206,9 @@ model BackgroundOption {
   updatedAt   DateTime @updatedAt
 
   @@index([enabled, sortOrder])
+  @@unique([isDefault], where: { isDefault: true }, map: "BackgroundOption_single_default_idx")
 }
+
 model WelcomePageSettings {
   id        String   @id @default(cuid())
   key       String   @unique @default("main")
@@ -593,12 +2216,14 @@ model WelcomePageSettings {
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
+
 model DisplayStudioSettings {
   id          String   @id @default("main")
   preferences Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
 model UserSession {
   id           String    @id @default(cuid())
   userId       String
@@ -609,6 +2234,11 @@ model UserSession {
   lastActiveAt DateTime  @default(now())
   expiresAt    DateTime
   revokedAt    DateTime?
+  primaryAuthMethod       String?
+  secondFactorMethod      String?
+  mfaVerifiedAt           DateTime?
+  deviceVerifiedAt        DateTime?
+  lastReauthenticatedAt   DateTime?
 
   @@index([userId, revokedAt])
   @@index([expiresAt])
@@ -616,6 +2246,7 @@ model UserSession {
 
 model AuditLog {
   id          String   @id @default(cuid())
+  eventId     String?  @unique
   actorUserId String?
   actor       User?    @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
   action      String
@@ -627,4 +2258,101 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@index([action, createdAt])
   @@index([targetType, targetId])
+}
+
+model UserIdentity {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       IdentityProvider
+  providerSubject String
+  identifier     String?
+  verifiedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([provider, providerSubject])
+  @@index([userId, provider])
+  @@index([identifier])
+}
+
+model PasskeyCredential {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId    String    @unique
+  publicKey       Bytes
+  counter         BigInt    @default(0)
+  transports      String[]  @default([])
+  deviceType      String?
+  backedUp        Boolean   @default(false)
+  name            String?
+  createdAt       DateTime  @default(now())
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+
+  @@index([userId, revokedAt])
+}
+
+model UserSecuritySettings {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newDeviceAlerts    Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model TotpCredential {
+  id                      String    @id @default(cuid())
+  userId                  String    @unique
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretCiphertext        String
+  pendingSecretCiphertext String?
+  enrollmentExpiresAt     DateTime?
+  lastAcceptedStep        BigInt?
+  verifiedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+}
+
+model RecoveryCode {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash    String    @unique
+  generationId String?
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, usedAt])
+  @@index([userId, generationId, revokedAt, usedAt])
+}
+
+enum IdentityProvider {
+  EMAIL
+  PHONE
+  GOOGLE
+  APPLE
+}
+
+enum EmailActionPurpose {
+  VERIFY_EMAIL
+  MAGIC_LINK
+  PASSWORD_RESET
+}
+
+model EmailActionToken {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose     EmailActionPurpose
+  tokenHash   String            @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime          @default(now())
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
 }

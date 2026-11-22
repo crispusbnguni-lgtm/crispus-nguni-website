@@ -1,4 +1,3 @@
-
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -26,9 +25,7 @@ export default async function BookingPage({
   }
 
   const portfolio = await prisma.portfolioSite.findUnique({
-    where: {
-      slug,
-    },
+    where: { slug },
     select: {
       id: true,
       slug: true,
@@ -36,11 +33,10 @@ export default async function BookingPage({
       name: true,
       theme: true,
       websiteBackground: true,
+      timezone: true,
+      timezoneReviewRequired: true,
       consultationTypes: {
-        where: {
-          id: type,
-          active: true,
-        },
+        where: { id: type, active: true },
         take: 1,
       },
     },
@@ -77,34 +73,28 @@ export default async function BookingPage({
             <p className="portfolio-accent text-xs font-semibold uppercase tracking-[0.25em]">
               Selected Consultation
             </p>
-
             <h1 className="mt-4 text-3xl font-semibold tracking-tight">
               {consultationType.title}
             </h1>
-
             {consultationType.description && (
               <p className="portfolio-muted mt-4 leading-7">
                 {consultationType.description}
               </p>
             )}
-
             <div className="mt-7 space-y-3">
               <div className="portfolio-glass p-4">
                 <p className="portfolio-muted text-xs uppercase tracking-[0.2em]">
                   Duration
                 </p>
-
                 <p className="mt-1 font-medium">
                   {consultationType.durationMinutes} minutes
                 </p>
               </div>
-
               {consultationType.meetingMethod && (
                 <div className="portfolio-glass p-4">
                   <p className="portfolio-muted text-xs uppercase tracking-[0.2em]">
                     Meeting
                   </p>
-
                   <p className="mt-1 font-medium">
                     {consultationType.meetingMethod}
                   </p>
@@ -114,14 +104,26 @@ export default async function BookingPage({
           </aside>
 
           <div className="portfolio-glass p-7 sm:p-9">
-            <ConsultationBooking
-              slug={portfolio.slug}
-              portfolioId={portfolio.id}
-              consultationTypeId={consultationType.id}
-              consultationTitle={consultationType.title}
-              durationMinutes={consultationType.durationMinutes}
-              meetingMethod={consultationType.meetingMethod}
-            />
+            {portfolio.timezoneReviewRequired ? (
+              <div role="alert" className="portfolio-glass p-6">
+                <h2 className="text-lg font-semibold">
+                  Booking temporarily unavailable
+                </h2>
+                <p className="portfolio-muted mt-2 leading-7">
+                  The portfolio owner needs to review the booking timezone before appointments can be scheduled. Please try again later.
+                </p>
+              </div>
+            ) : (
+              <ConsultationBooking
+                slug={portfolio.slug}
+                portfolioId={portfolio.id}
+                consultationTypeId={consultationType.id}
+                consultationTitle={consultationType.title}
+                durationMinutes={consultationType.durationMinutes}
+                meetingMethod={consultationType.meetingMethod}
+                timezone={portfolio.timezone}
+              />
+            )}
           </div>
         </div>
       </section>

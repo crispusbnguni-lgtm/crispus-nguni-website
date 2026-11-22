@@ -1,7 +1,27 @@
 
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
+import { isValidIanaTimezone } from "@/lib/consultations/availability";
+import {
+  safePortfolioBackground,
+  safePortfolioExternalLink,
+  safePortfolioImageUrl,
+  safePortfolioPhoneHref,
+} from "@/lib/portfolio-public";
+
+export const dynamic = "force-dynamic";
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "no-store");
+  return NextResponse.json(body, {
+    ...init,
+    headers,
+  });
+}
 
 function getAdminUserId(request: Request) {
   const url = new URL(request.url);
@@ -17,7 +37,7 @@ async function getTargetUserId(request: Request) {
       targetUserId: null,
       error: NextResponse.json(
         { success: false, message: "You must be logged in." },
-        { status: 401 }
+        { status: 401, headers: NO_STORE_HEADERS }
       ),
     };
   }
@@ -34,7 +54,7 @@ async function getTargetUserId(request: Request) {
           success: false,
           message: "You are not authorized to manage this portfolio.",
         },
-        { status: 403 }
+        { status: 403, headers: NO_STORE_HEADERS }
       ),
     };
   }
@@ -71,15 +91,15 @@ export async function GET(request: Request) {
     if (!portfolio) {
       return NextResponse.json(
         { success: false, message: "Portfolio not found." },
-        { status: 404 }
+        { status: 404, headers: NO_STORE_HEADERS }
       );
     }
 
-    return NextResponse.json({ success: true, portfolio });
+    return noStoreJson({ success: true, portfolio });
   } catch (error) {
     console.error("Portfolio GET error:", error);
 
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, message: "Unable to load portfolio." },
       { status: 500 }
     );
@@ -88,13 +108,19 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) {
+      originResponse.headers.set("Cache-Control", "no-store");
+      return originResponse;
+    }
+
     const { user, targetUserId, error } =
       await getTargetUserId(request);
 
     if (error || !user || !targetUserId) {
       return (
         error ||
-        NextResponse.json(
+        noStoreJson(
           {
             success: false,
             message: "Unable to determine portfolio owner.",
@@ -104,23 +130,48 @@ export async function PUT(request: Request) {
       );
     }
 
-    const body = await request.json();
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return noStoreJson(
+        { success: false, message: "Invalid portfolio details." },
+        { status: 400 },
+      );
+    }
+    const input = body as Record<string, unknown>;
 
-    const name = String(body.name ?? "").trim();
-    const title = String(body.title ?? "").trim();
-    const bio = String(body.bio ?? "").trim();
-    const location = String(body.location ?? "").trim();
-    const phone = String(body.phone ?? "").trim();
-    const website = String(body.website ?? "").trim();
-    const profileImage = String(body.profileImage ?? "").trim();
+    const readText = (value: unknown) => typeof value === "string" ? value.trim() : "";
+    const name = readText(input.name);
+    const title = readText(input.title);
+    const bio = readText(input.bio);
+    const location = readText(input.location);
+    const timezone = typeof input.timezone === "string" ? input.timezone.trim() : undefined;
+    const currentPortfolio = await prisma.portfolioSite.findUnique({
+      where: { userId: targetUserId },
+      select: { timezoneReviewRequired: true },
+    });
+    if (!currentPortfolio) {
+      return noStoreJson({ success: false, message: "Portfolio not found." }, { status: 404 });
+    }
+    if (timezone !== undefined && !isValidIanaTimezone(timezone)) {
+      return noStoreJson({ success: false, message: "Enter a valid IANA timezone, for example Africa/Nairobi." }, { status: 400 });
+    }
+    const phone = readText(input.phone);
+    const website = readText(input.website);
+    const profileImage = readText(input.profileImage);
+    const linkedin = readText(input.linkedin);
+    const instagram = readText(input.instagram);
+    const facebook = readText(input.facebook);
+    const youtube = readText(input.youtube);
+    const tiktok = readText(input.tiktok);
+    const whatsapp = readText(input.whatsapp);
 
-    if (!name || !title) {
-      return NextResponse.json(
+    if (!name || !title || name.length > 120 || title.length > 180 || bio.length > 10_000 || location.length > 160) {
+      return noStoreJson(
         {
           success: false,
-          message: "Name and professional title are required.",
+          message: "Enter a valid name, professional title, biography and location.",
         },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -129,25 +180,25 @@ export async function PUT(request: Request) {
     const allowedThemes = ["dark", "light", "sepia"];
 
     const requestedTemplate = String(
-      body.template ?? "professional"
+      input.template ?? "professional"
     ).trim();
 
     const requestedTheme = String(
-      body.theme ?? "dark"
+      input.theme ?? "dark"
     ).trim();
 
     if (!allowedTemplates.includes(requestedTemplate)) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           message: "Invalid portfolio template.",
         },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
     if (!allowedThemes.includes(requestedTheme)) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           success: false,
           message: "Invalid portfolio theme.",
@@ -156,19 +207,42 @@ export async function PUT(request: Request) {
       );
     }
 
-    const dashboardBackground =
-      String(body.dashboardBackground ?? "").trim().slice(0, 500) ||
-      null;
+    const dashboardBackgroundInput = readText(input.dashboardBackground);
+    const websiteBackgroundInput = readText(input.websiteBackground);
+    const dashboardBackgroundResult = dashboardBackgroundInput
+      ? safePortfolioBackground(dashboardBackgroundInput)
+      : null;
+    const websiteBackgroundResult = websiteBackgroundInput
+      ? safePortfolioBackground(websiteBackgroundInput)
+      : null;
+    const dashboardBackground = dashboardBackgroundResult?.value ?? null;
+    const websiteBackground = websiteBackgroundResult?.value ?? null;
 
-    const websiteBackground =
-      String(body.websiteBackground ?? "").trim().slice(0, 500) ||
-      null;
+    const profileImageUrl = profileImage ? safePortfolioImageUrl(profileImage) : null;
+    const externalUrls = [website, linkedin, instagram, facebook, youtube, tiktok, whatsapp];
+    const invalidUrl = externalUrls.some((value) => value && !safePortfolioExternalLink(value));
+    const invalidPhone = phone && !safePortfolioPhoneHref(phone);
+
+    if (
+      (dashboardBackgroundInput && !dashboardBackgroundResult) ||
+      (websiteBackgroundInput && !websiteBackgroundResult) ||
+      (profileImage && !profileImageUrl) ||
+      invalidUrl ||
+      invalidPhone
+    ) {
+      return noStoreJson(
+        { success: false, message: "One or more portfolio links or backgrounds are invalid." },
+        { status: 400, headers: NO_STORE_HEADERS },
+      );
+    }
 
     const data: {
       name: string;
       title: string;
       bio: string | null;
       location: string | null;
+      timezone?: string;
+      timezoneReviewRequired?: boolean;
       phone: string | null;
       website: string | null;
       profileImage: string | null;
@@ -183,6 +257,7 @@ export async function PUT(request: Request) {
       dashboardBackground: string | null;
       websiteBackground: string | null;
       published?: boolean;
+      visibility?: "PUBLIC" | "UNLISTED";
     } = {
       name,
       title,
@@ -190,13 +265,13 @@ export async function PUT(request: Request) {
       location: location || null,
       phone: phone || null,
       website: website || null,
-      profileImage: profileImage || null,
-      linkedin: String(body.linkedin ?? "").trim() || null,
-      instagram: String(body.instagram ?? "").trim() || null,
-      facebook: String(body.facebook ?? "").trim() || null,
-      youtube: String(body.youtube ?? "").trim() || null,
-      tiktok: String(body.tiktok ?? "").trim() || null,
-      whatsapp: String(body.whatsapp ?? "").trim() || null,
+      profileImage: profileImageUrl,
+      linkedin: linkedin || null,
+      instagram: instagram || null,
+      facebook: facebook || null,
+      youtube: youtube || null,
+      tiktok: tiktok || null,
+      whatsapp: whatsapp || null,
 
       template: requestedTemplate,
       theme: requestedTheme,
@@ -204,21 +279,99 @@ export async function PUT(request: Request) {
       websiteBackground,
     };
 
-    // Change publication status only when explicitly provided.
-    if (typeof body.published === "boolean") {
-      data.published = body.published;
+    // A flagged legacy timezone can only be replaced after explicit owner confirmation.
+    // Ordinary profile saves and publish changes preserve the unresolved review state.
+    if (
+      timezone !== undefined &&
+      (!currentPortfolio.timezoneReviewRequired || input.timezoneReviewConfirmed === true)
+    ) {
+      data.timezone = timezone;
+      data.timezoneReviewRequired = false;
     }
+
+       // Change publication status only when explicitly provided.
+    if (typeof input.published === "boolean") {
+      data.published = input.published;
+    }
+
+    // Change portfolio visibility only when explicitly provided.
+    if (input.visibility !== undefined) {
+      if (
+        input.visibility !== "PUBLIC" &&
+        input.visibility !== "UNLISTED"
+      ) {
+        return noStoreJson(
+          {
+            success: false,
+            message: "Invalid portfolio visibility.",
+          },
+          { status: 400 }
+        );
+      }
+
+      data.visibility = input.visibility;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     const portfolio = await prisma.portfolioSite.update({
       where: { userId: targetUserId },
       data,
     });
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       message:
-        typeof body.published === "boolean"
-          ? body.published
+        typeof input.published === "boolean"
+          ? input.published
             ? "Portfolio published successfully."
             : "Portfolio unpublished successfully."
           : "Portfolio updated successfully.",
@@ -227,7 +380,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     console.error("Portfolio PUT error:", error);
 
-    return NextResponse.json(
+    return noStoreJson(
       {
         success: false,
         message: "Unable to update portfolio.",

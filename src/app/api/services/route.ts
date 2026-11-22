@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { invalidatePortfolioLeadScores } from "@/lib/lead-crm";
 
 function getAdminUserId(request: Request) {
   const url = new URL(request.url);
@@ -163,16 +164,20 @@ export async function POST(request: Request) {
       },
     });
 
-    const service = await prisma.service.create({
-      data: {
-        portfolioId: portfolio.id,
-        title,
-        description: description || null,
-        icon: icon || null,
-        price: price || null,
-        link: link || null,
-        sortOrder: (lastService?.sortOrder ?? -1) + 1,
-      },
+    const service = await prisma.$transaction(async (tx) => {
+      const created = await tx.service.create({
+        data: {
+          portfolioId: portfolio.id,
+          title,
+          description: description || null,
+          icon: icon || null,
+          price: price || null,
+          link: link || null,
+          sortOrder: (lastService?.sortOrder ?? -1) + 1,
+        },
+      });
+      await invalidatePortfolioLeadScores(tx, portfolio.id);
+      return created;
     });
 
     return NextResponse.json(
@@ -259,17 +264,19 @@ export async function PUT(request: Request) {
       );
     }
 
-    const service = await prisma.service.update({
-      where: {
-        id: existingService.id,
-      },
-      data: {
-        title,
-        description: description || null,
-        icon: icon || null,
-        price: price || null,
-        link: link || null,
-      },
+    const service = await prisma.$transaction(async (tx) => {
+      const updated = await tx.service.update({
+        where: { id: existingService.id },
+        data: {
+          title,
+          description: description || null,
+          icon: icon || null,
+          price: price || null,
+          link: link || null,
+        },
+      });
+      await invalidatePortfolioLeadScores(tx, portfolio.id);
+      return updated;
     });
 
     return NextResponse.json({
@@ -379,24 +386,17 @@ export async function PATCH(request: Request) {
       });
     }
 
-    await prisma.$transaction([
-      prisma.service.update({
-        where: {
-          id: currentService.id,
-        },
-        data: {
-          sortOrder: neighboringService.sortOrder,
-        },
-      }),
-      prisma.service.update({
-        where: {
-          id: neighboringService.id,
-        },
-        data: {
-          sortOrder: currentService.sortOrder,
-        },
-      }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      await tx.service.update({
+        where: { id: currentService.id },
+        data: { sortOrder: neighboringService.sortOrder },
+      });
+      await tx.service.update({
+        where: { id: neighboringService.id },
+        data: { sortOrder: currentService.sortOrder },
+      });
+      await invalidatePortfolioLeadScores(tx, portfolio.id);
+    });
 
     const services = await prisma.service.findMany({
       where: {
@@ -472,10 +472,9 @@ export async function DELETE(request: Request) {
       );
     }
 
-    await prisma.service.delete({
-      where: {
-        id: service.id,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.service.delete({ where: { id: service.id } });
+      await invalidatePortfolioLeadScores(tx, portfolio.id);
     });
 
     return NextResponse.json({

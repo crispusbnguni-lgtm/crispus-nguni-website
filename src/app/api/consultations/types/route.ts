@@ -1,6 +1,9 @@
+
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
 
 type ConsultationTypePayload = {
   title?: unknown;
@@ -73,6 +76,21 @@ function parseBoolean(
   return value;
 }
 
+/**
+ * All consultation scheduling mutations must use the same
+ * portfolio lock as both consultation booking endpoints.
+ *
+ * PostgreSQL releases this transaction-level lock automatically
+ * when the transaction commits or rolls back.
+ */
+async function lockPortfolio(
+  tx: Prisma.TransactionClient,
+  portfolioId: string,
+) {
+  await tx.$queryRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${portfolioId}))
+  `;
+}
 
 async function getPortfolioForRequest(
   request: Request,
@@ -208,6 +226,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const originResponse =
+      requireSameOriginApiRequest(request);
+
+    if (originResponse) return originResponse;
+
     const {
       error,
       portfolio,
@@ -302,22 +325,32 @@ export async function POST(request: Request) {
       );
 
     const consultationType =
-      await prisma.consultationType.create({
-        data: {
-          portfolioId: portfolio!.id,
-          title,
-          description,
-          durationMinutes,
-          bufferBeforeMinutes,
-          bufferAfterMinutes,
-          minimumNoticeMinutes,
-          maximumAdvanceDays,
-          meetingMethod,
-          active,
-          featured,
-          sortOrder,
+      await prisma.$transaction(
+        async (tx) => {
+          await lockPortfolio(tx, portfolio!.id);
+
+          return tx.consultationType.create({
+            data: {
+              portfolioId: portfolio!.id,
+              title,
+              description,
+              durationMinutes,
+              bufferBeforeMinutes,
+              bufferAfterMinutes,
+              minimumNoticeMinutes,
+              maximumAdvanceDays,
+              meetingMethod,
+              active,
+              featured,
+              sortOrder,
+            },
+          });
         },
-      });
+        {
+          maxWait: 10000,
+          timeout: 15000,
+        },
+      );
 
     return NextResponse.json(
       {
@@ -336,9 +369,7 @@ export async function POST(request: Request) {
 
     if (
       error instanceof Error &&
-      !error.message.includes(
-        "Prisma",
-      )
+      !error.message.includes("Prisma")
     ) {
       return jsonError(
         error.message,
@@ -355,6 +386,11 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const originResponse =
+      requireSameOriginApiRequest(request);
+
+    if (originResponse) return originResponse;
+
     const {
       error,
       portfolio,
@@ -377,21 +413,6 @@ export async function PUT(request: Request) {
     if (!id) {
       return jsonError(
         "Consultation type ID is required.",
-      );
-    }
-
-    const existing =
-      await prisma.consultationType.findFirst({
-        where: {
-          id,
-          portfolioId: portfolio!.id,
-        },
-      });
-
-    if (!existing) {
-      return jsonError(
-        "Consultation type not found.",
-        404,
       );
     }
 
@@ -518,17 +539,59 @@ export async function PUT(request: Request) {
         );
     }
 
-    const consultationType =
-      await prisma.consultationType.update({
-        where: {
-          id: existing.id,
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          await lockPortfolio(tx, portfolio!.id);
+
+          // Re-fetch after acquiring the lock. This prevents
+          // updating a stale or cross-portfolio record.
+          const existing =
+            await tx.consultationType.findFirst({
+              where: {
+                id,
+                portfolioId: portfolio!.id,
+              },
+              select: {
+                id: true,
+              },
+            });
+
+          if (!existing) {
+            return {
+              kind: "NOT_FOUND" as const,
+            };
+          }
+
+          const consultationType =
+            await tx.consultationType.update({
+              where: {
+                id: existing.id,
+              },
+              data,
+            });
+
+          return {
+            kind: "UPDATED" as const,
+            consultationType,
+          };
         },
-        data,
-      });
+        {
+          maxWait: 10000,
+          timeout: 15000,
+        },
+      );
+
+    if (result.kind === "NOT_FOUND") {
+      return jsonError(
+        "Consultation type not found.",
+        404,
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      consultationType,
+      consultationType: result.consultationType,
       message:
         "Consultation type updated successfully.",
     });
@@ -540,9 +603,7 @@ export async function PUT(request: Request) {
 
     if (
       error instanceof Error &&
-      !error.message.includes(
-        "Prisma",
-      )
+      !error.message.includes("Prisma")
     ) {
       return jsonError(
         error.message,
@@ -559,6 +620,11 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const originResponse =
+      requireSameOriginApiRequest(request);
+
+    if (originResponse) return originResponse;
+
     const {
       error,
       portfolio,
@@ -581,40 +647,73 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const existing =
-      await prisma.consultationType.findFirst({
-        where: {
-          id,
-          portfolioId: portfolio!.id,
-        },
-      });
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          await lockPortfolio(tx, portfolio!.id);
 
-    if (!existing) {
+          // The existence check, booking-history check and deletion
+          // must all happen under the same portfolio lock.
+          const existing =
+            await tx.consultationType.findFirst({
+              where: {
+                id,
+                portfolioId: portfolio!.id,
+              },
+              select: {
+                id: true,
+              },
+            });
+
+          if (!existing) {
+            return {
+              kind: "NOT_FOUND" as const,
+            };
+          }
+
+          const bookingCount =
+            await tx.consultation.count({
+              where: {
+                consultationTypeId: existing.id,
+                portfolioId: portfolio!.id,
+              },
+            });
+
+          if (bookingCount > 0) {
+            return {
+              kind: "HAS_HISTORY" as const,
+            };
+          }
+
+          await tx.consultationType.delete({
+            where: {
+              id: existing.id,
+            },
+          });
+
+          return {
+            kind: "DELETED" as const,
+          };
+        },
+        {
+          maxWait: 10000,
+          timeout: 15000,
+        },
+      );
+
+    if (result.kind === "NOT_FOUND") {
       return jsonError(
         "Consultation type not found.",
         404,
       );
     }
 
-    const bookingCount =
-      await prisma.consultation.count({
-        where: {
-          consultationTypeId: existing.id,
-        },
-      });
-
-    if (bookingCount > 0) {
+    if (result.kind === "HAS_HISTORY") {
       return jsonError(
         "This consultation type cannot be deleted because it has booking history. Deactivate it instead.",
         409,
       );
     }
-
-    await prisma.consultationType.delete({
-      where: {
-        id: existing.id,
-      },
-    });
 
     return NextResponse.json({
       success: true,

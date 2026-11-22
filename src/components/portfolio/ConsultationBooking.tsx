@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ConsultationConfirmation } from "./ConsultationConfirmation";
 import { ConsultationDetailsForm } from "./ConsultationDetailsForm";
 
@@ -12,6 +12,7 @@ type ConsultationBookingProps = {
   consultationTitle: string;
   durationMinutes: number;
   meetingMethod: string | null;
+  timezone?: string;
 };
 
 type ConsultationSlot = {
@@ -30,6 +31,7 @@ type ApiResponse = {
   success?: boolean;
   message?: string;
   error?: string;
+  code?: string;
   slots?: ConsultationSlot[];
   booking?: {
     id?: string;
@@ -43,8 +45,6 @@ type ApiResponse = {
 };
 
 type BookingStep = "datetime" | "details" | "confirmation" | "success";
-
-const TIME_ZONE = "Africa/Nairobi";
 
 async function readApiResponse(
   response: Response,
@@ -73,29 +73,75 @@ async function readApiResponse(
 }
 
 function getDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 }
 
-function formatTimeLabel(value: string): string {
+function formatTimeLabel(value: string, timezone: string): string {
   return new Intl.DateTimeFormat("en-KE", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
-    timeZone: TIME_ZONE,
+    timeZone: timezone,
   }).format(new Date(value));
 }
 
-function formatLongDate(value: string): string {
+function formatTimezoneOffset(
+  value: string,
+  timezone: string,
+): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    timeZoneName: "longOffset",
+  }).formatToParts(new Date(value));
+
+  const offset = parts.find(
+    (part) => part.type === "timeZoneName",
+  )?.value;
+
+  if (!offset || offset === "GMT") {
+    return "UTC+00:00";
+  }
+
+  return offset.replace(/^GMT/, "UTC").replace(/-/g, "−");
+}
+
+/**
+ * Adds the UTC offset only when the same local clock time
+ * occurs more than once in the available slots.
+ *
+ * This distinguishes repeated DST times without cluttering
+ * ordinary appointment times.
+ */
+function formatSlotTimeLabel(
+  slot: ConsultationSlot,
+  slots: ConsultationSlot[],
+  timezone: string,
+): string {
+  const localTime = formatTimeLabel(slot.start, timezone);
+
+  const matchingSlots = slots.filter(
+    (other) =>
+      formatTimeLabel(other.start, timezone) === localTime,
+  );
+
+  if (matchingSlots.length <= 1) {
+    return localTime;
+  }
+
+  return `${localTime} (${formatTimezoneOffset(slot.start, timezone)})`;
+}
+
+function formatLongDate(value: string, timezone: string): string {
   return new Intl.DateTimeFormat("en-KE", {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
-    timeZone: TIME_ZONE,
+    timeZone: timezone,
   }).format(new Date(value));
 }
 
@@ -107,12 +153,15 @@ function formatShortDate(date: Date): {
   return {
     weekday: new Intl.DateTimeFormat("en-KE", {
       weekday: "short",
+      timeZone: "UTC",
     }).format(date),
     day: new Intl.DateTimeFormat("en-KE", {
       day: "numeric",
+      timeZone: "UTC",
     }).format(date),
     month: new Intl.DateTimeFormat("en-KE", {
       month: "short",
+      timeZone: "UTC",
     }).format(date),
   };
 }
@@ -124,6 +173,7 @@ export function ConsultationBooking({
   consultationTitle,
   durationMinutes,
   meetingMethod,
+  timezone = "Africa/Nairobi",
 }: ConsultationBookingProps) {
   const [step, setStep] = useState<BookingStep>("datetime");
   const [selectedDate, setSelectedDate] = useState("");
@@ -138,25 +188,47 @@ export function ConsultationBooking({
   const [bookingError, setBookingError] = useState("");
   const [bookingReference, setBookingReference] = useState("");
 
+  const slotRequestId = useRef(0);
+  const submittingRef = useRef(false);
+
   const availableDates = useMemo(() => {
     const dates: Date[] = [];
-    const today = new Date();
+
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+
+    const values = Object.fromEntries(
+      parts
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, part.value]),
+    );
+
+    const today = new Date(
+      Date.UTC(
+        Number(values.year),
+        Number(values.month) - 1,
+        Number(values.day),
+        12,
+      ),
+    );
 
     for (let index = 0; index < 14; index += 1) {
-      dates.push(
-        new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate() + index,
-        ),
-      );
+      const date = new Date(today);
+      date.setUTCDate(today.getUTCDate() + index);
+      dates.push(date);
     }
 
     return dates;
-  }, []);
+  }, [timezone]);
 
   const loadSlots = useCallback(
     async (date: string) => {
+      const requestId = ++slotRequestId.current;
+
       setSelectedDate(date);
       setSelectedSlot(null);
       setSlots([]);
@@ -180,6 +252,8 @@ export function ConsultationBooking({
         );
 
         const data = await readApiResponse(response);
+
+        if (requestId !== slotRequestId.current) return;
 
         if (!response.ok || data.success === false) {
           throw new Error(
@@ -211,14 +285,19 @@ export function ConsultationBooking({
           );
         }
       } catch (error) {
+        if (requestId !== slotRequestId.current) return;
+
         console.error("Loading consultation slots failed:", error);
+
         setSlotError(
           error instanceof Error
             ? error.message
             : "Unable to load available times. Please try again.",
         );
       } finally {
-        setLoadingSlots(false);
+        if (requestId === slotRequestId.current) {
+          setLoadingSlots(false);
+        }
       }
     },
     [portfolioId, consultationTypeId],
@@ -243,6 +322,8 @@ export function ConsultationBooking({
   };
 
   const handleConfirmBooking = async () => {
+    if (submittingRef.current) return;
+
     if (!selectedSlot || !bookingDetails) {
       setBookingError(
         "Your booking details are incomplete. Please review your selection.",
@@ -251,6 +332,7 @@ export function ConsultationBooking({
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setBookingError("");
 
@@ -288,9 +370,10 @@ export function ConsultationBooking({
           data.error ||
           `The server returned HTTP ${response.status}.`;
 
-        if (response.status === 409) {
+        if (response.status === 409 && data.code === "SLOT_UNAVAILABLE") {
           setSelectedSlot(null);
           await loadSlots(selectedDate);
+
           throw new Error(
             data.message ||
               "That time is no longer available. Please select another time.",
@@ -298,13 +381,9 @@ export function ConsultationBooking({
         }
 
         setBookingError(
-          `Booking failed (HTTP ${response.status}): ${message}`,
+          message ||
+            "Your request could not be completed. Please try again.",
         );
-
-        alert(
-          `Consultation booking failed\n\nHTTP status: ${response.status} ${response.statusText}\n\nAPI response:\n${JSON.stringify(data, null, 2)}`,
-        );
-
         return;
       }
 
@@ -314,6 +393,12 @@ export function ConsultationBooking({
         data.booking?.id ||
         data.consultation?.id ||
         "";
+
+      if (data.success !== true || !reference) {
+        throw new Error(
+          "The server did not confirm a valid booking reference. Please contact the portfolio owner before trying again.",
+        );
+      }
 
       setBookingReference(reference);
       setStep("success");
@@ -326,6 +411,7 @@ export function ConsultationBooking({
           : "Your booking could not be completed. Please try again.",
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -339,6 +425,10 @@ export function ConsultationBooking({
     setBookingError("");
     setStep("details");
   };
+
+  const selectedTimeLabel = selectedSlot
+    ? formatSlotTimeLabel(selectedSlot, slots, timezone)
+    : "";
 
   if (step === "success") {
     return (
@@ -372,7 +462,7 @@ export function ConsultationBooking({
             <p className="portfolio-muted text-sm">Date</p>
             <p className="mt-1 font-semibold">
               {selectedSlot
-                ? formatLongDate(selectedSlot.start)
+                ? formatLongDate(selectedSlot.start, timezone)
                 : "Confirmed"}
             </p>
           </div>
@@ -381,11 +471,12 @@ export function ConsultationBooking({
             <p className="portfolio-muted text-sm">Time</p>
             <p className="mt-1 font-semibold">
               {selectedSlot
-                ? `${formatTimeLabel(selectedSlot.start)} – ${formatTimeLabel(
+                ? `${selectedTimeLabel} – ${formatTimeLabel(
                     selectedSlot.end,
+                    timezone,
                   )}`
                 : "Confirmed"}{" "}
-              East Africa Time
+              {timezone}
             </p>
           </div>
 
@@ -429,7 +520,7 @@ export function ConsultationBooking({
           consultationTitle={consultationTitle}
           selectedDate={selectedDate}
           selectedTime={selectedSlot?.start ?? ""}
-          timezone={TIME_ZONE}
+          timezone={timezone}
           onContinue={handleDetailsContinue}
         />
       </div>
@@ -470,12 +561,13 @@ export function ConsultationBooking({
         <ConsultationConfirmation
           consultationTitle={consultationTitle}
           selectedDate={selectedSlot.start}
-          selectedTime={formatTimeLabel(selectedSlot.start)}
-          timezone={TIME_ZONE}
+          selectedTime={selectedTimeLabel}
+          timezone={timezone}
           fullName={bookingDetails.fullName}
           email={bookingDetails.email}
           phone={bookingDetails.phone}
           reason={bookingDetails.reason}
+          submitting={submitting}
           onBack={handleBackToDetails}
           onConfirm={handleConfirmBooking}
         />
@@ -511,7 +603,7 @@ export function ConsultationBooking({
         <div className="portfolio-muted mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
           <span>{durationMinutes} minutes</span>
           {meetingMethod && <span>{meetingMethod}</span>}
-          <span>East Africa Time (EAT)</span>
+          <span>{timezone}</span>
         </div>
       </div>
 
@@ -593,7 +685,7 @@ export function ConsultationBooking({
                       : "border-[var(--portfolio-border)] bg-[var(--portfolio-surface)] text-[var(--portfolio-text)] hover:border-[var(--portfolio-accent)]"
                   }`}
                 >
-                  {formatTimeLabel(slot.start)}
+                  {formatSlotTimeLabel(slot, slots, timezone)}
                 </button>
               );
             })}
@@ -604,9 +696,10 @@ export function ConsultationBooking({
       <div className="mt-8 flex flex-col gap-4 border-t border-[var(--portfolio-border)] pt-6 sm:flex-row sm:items-center sm:justify-between">
         <p className="portfolio-muted text-sm">
           {selectedSlot
-            ? `Selected: ${formatLongDate(selectedSlot.start)} at ${formatTimeLabel(
+            ? `Selected: ${formatLongDate(
                 selectedSlot.start,
-              )}`
+                timezone,
+              )} at ${selectedTimeLabel}`
             : "Choose an available time to continue."}
         </p>
 

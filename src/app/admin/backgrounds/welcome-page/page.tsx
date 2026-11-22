@@ -1,5 +1,7 @@
+
 import { requireSuperAdmin } from "@/lib/authorization";
 import WelcomePageEditor from "./WelcomePageEditor";
+import PublicPagesEditor from "./PublicPagesEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +9,7 @@ export default async function WelcomePageAdmin() {
   await requireSuperAdmin();
 
   return (
-    <main className="min-h-screen bg-[#05070D] px-4 py-10 text-white sm:px-8">
+    <main className="min-h-screen px-4 py-10 text-white sm:px-8">
       <div className="mx-auto max-w-5xl">
         <a
           href="/admin"
@@ -16,8 +18,12 @@ export default async function WelcomePageAdmin() {
           ← Back to Super Admin
         </a>
 
-        <div className="mt-8">
+        <div className="mt-8 space-y-10">
           <WelcomePageEditor />
+
+          <section className="border-t border-white/10 pt-10">
+            <PublicPagesEditor />
+          </section>
         </div>
       </div>
     </main>

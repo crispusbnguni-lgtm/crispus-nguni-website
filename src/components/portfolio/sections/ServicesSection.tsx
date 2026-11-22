@@ -1,3 +1,5 @@
+import { safePortfolioExternalLink } from "@/lib/portfolio-public";
+
 type Service = {
   id: string;
   title: string;
@@ -65,9 +67,9 @@ export function ServicesSection({
                   </p>
                 )}
 
-                {service.link && (
+                {safePortfolioExternalLink(service.link) && (
                   <a
-                    href={service.link}
+                    href={safePortfolioExternalLink(service.link)!}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-6 inline-flex text-sm font-medium text-[#126BFF] transition hover:text-white"

@@ -47,22 +47,6 @@ const DAYS = [
   "Saturday",
 ];
 
-const TIMEZONES = [
-  "Africa/Nairobi",
-  "Africa/Johannesburg",
-  "Africa/Cairo",
-  "Africa/Lagos",
-  "Europe/London",
-  "Europe/Paris",
-  "Asia/Dubai",
-  "Asia/Kolkata",
-  "Asia/Singapore",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-];
-
 const defaultRule = {
   dayOfWeek: 1,
   startTime: "09:00",
@@ -873,31 +857,11 @@ export function AvailabilityManager({
                 </select>
               </div>
 
-              <div>
-                <label className={labelClass}>
-                  Timezone
-                </label>
-
-                <select
-                  value={ruleForm.timezone}
-                  onChange={(event) =>
-                    setRuleForm((current) => ({
-                      ...current,
-                      timezone: event.target.value,
-                    }))
-                  }
-                  className={inputClass}
-                >
-                  {TIMEZONES.map((timezone) => (
-                    <option
-                      key={timezone}
-                      value={timezone}
-                      className="bg-[#080B12]"
-                    >
-                      {timezone}
-                    </option>
-                  ))}
-                </select>
+              <div className="sm:col-span-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <p className={labelClass}>Booking timezone</p>
+                <p className="text-sm leading-6 text-white/65">
+                  Weekly availability uses the timezone configured in Portfolio Settings. Change it there to update the timezone for your entire booking calendar.
+                </p>
               </div>
 
               <div>

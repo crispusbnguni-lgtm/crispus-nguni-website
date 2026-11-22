@@ -7,12 +7,13 @@ import { useState } from "react";
 
 const navigationItems = [
   { label: "Overview", href: "/dashboard", number: "01" },
-  { label: "Portfolio", href: "/dashboard/portfolio", number: "02" },
-  { label: "Leads", href: "/dashboard/leads", number: "03" },
+  { label: "My Workspace", href: "/dashboard/workspace", number: "02" },
+  { label: "Portfolio", href: "/dashboard/portfolio", number: "03" },
+  { label: "Leads", href: "/dashboard/leads", number: "04" },
   {
     label: "Consultations",
     href: "/dashboard/consultations",
-    number: "04",
+    number: "05",
   },
 ];
 

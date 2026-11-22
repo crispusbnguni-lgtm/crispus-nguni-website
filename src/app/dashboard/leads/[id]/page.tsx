@@ -42,6 +42,38 @@ type Consultation = {
   consultationType?: { title: string } | null;
 };
 
+type ScoreReason = {
+  component: "fit" | "intent" | "engagement" | "recency";
+  code: string;
+  label: string;
+  points: number;
+};
+
+type ScoreComponents = {
+  fit: number;
+  intent: number;
+  engagement: number;
+  recency: number;
+};
+
+type ScoreBreakdown = {
+  components: ScoreComponents;
+  reasons: ScoreReason[];
+  temperature: LeadTemperature;
+};
+
+type ScoreHistoryItem = {
+  id: string;
+  totalScore: number;
+  fitScore: number;
+  intentScore: number;
+  engagementScore: number;
+  recencyScore: number;
+  reasons: ScoreReason[];
+  nextBestAction: string;
+  createdAt: string;
+};
+
 type Lead = {
   id: string;
   name: string;
@@ -51,9 +83,14 @@ type Lead = {
   location: string | null;
   message: string | null;
   source: string;
+  origin: string;
+  sourceDetail: string | null;
   status: LeadStatus;
   temperature: LeadTemperature;
   score: number;
+  scoreBreakdown: ScoreBreakdown | null;
+  nextBestAction: string | null;
+  scoreHistory: ScoreHistoryItem[];
   interestedIn: string | null;
   budget: string | null;
   timeline: string | null;
@@ -262,6 +299,7 @@ const [lead, setLead] = useState<Lead | null>(null);
   const [activityContent, setActivityContent] = useState("");
   const [activityOutcome, setActivityOutcome] = useState("");
   const [activityFollowUp, setActivityFollowUp] = useState("");
+  const [activityConsultationId, setActivityConsultationId] = useState("");
   const [savingActivity, setSavingActivity] = useState(false);
 const portfolioSite = lead?.portfolio?.user?.portfolioSite;
 const ownerBackground = portfolioSite?.dashboardBackground;
@@ -408,6 +446,10 @@ const ownerPageStyle = {
             title,
             content: activityContent.trim() || null,
             outcome: activityOutcome.trim() || undefined,
+            consultationId:
+              activityType === "MEETING" && activityConsultationId
+                ? activityConsultationId
+                : undefined,
             nextFollowUpAt: activityFollowUp
               ? new Date(activityFollowUp).toISOString()
               : undefined,
@@ -425,6 +467,7 @@ const ownerPageStyle = {
       setActivityContent("");
       setActivityOutcome("");
       setActivityFollowUp("");
+      setActivityConsultationId("");
       setSuccess("Activity recorded successfully.");
 
       await loadLead();
@@ -570,6 +613,10 @@ const ownerPageStyle = {
               <p className="mt-2 text-base font-semibold text-[var(--text)]">
                 {labelFor(lead.source)}
               </p>
+              <p className={`mt-1 text-xs ${mutedClass}`}>
+                Entered via {labelFor(lead.origin)}
+                {lead.sourceDetail ? ` · ${lead.sourceDetail}` : ""}
+              </p>
             </div>
 
             <div>
@@ -590,6 +637,61 @@ const ownerPageStyle = {
               </p>
             </div>
           </div>
+        </section>
+
+        <section className={`${panelClass} p-6 sm:p-7`} aria-labelledby="score-explanation-heading">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#D9A441]">Explainable lead score</p>
+              <h2 id="score-explanation-heading" className="mt-1 text-xl font-semibold">Why this lead has {lead.score} points</h2>
+            </div>
+            <div className="max-w-xl rounded-2xl border border-[#D9A441]/20 bg-[#D9A441]/[0.06] p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#D9A441]">Next best action</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--text)]">{lead.nextBestAction || "Review the lead details and plan a useful next step."}</p>
+            </div>
+          </div>
+
+          {lead.scoreBreakdown && (
+            <>
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {([
+                  ["Fit", lead.scoreBreakdown.components.fit, 25],
+                  ["Intent", lead.scoreBreakdown.components.intent, 35],
+                  ["Engagement", lead.scoreBreakdown.components.engagement, 25],
+                  ["Recency", lead.scoreBreakdown.components.recency, 15],
+                ] as const).map(([name, score, maximum]) => (
+                  <div key={name} className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+                    <p className="text-xs text-[var(--text-muted)]">{name}</p>
+                    <p className="mt-1 text-xl font-semibold">{score}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">/ {maximum}</span></p>
+                  </div>
+                ))}
+              </div>
+              <ul className="mt-5 grid gap-2 sm:grid-cols-2">
+                {lead.scoreBreakdown.reasons.map((reason) => (
+                  <li key={reason.code} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.08] bg-black/[0.08] px-3.5 py-3 text-sm">
+                    <span className="leading-5 text-[var(--text-muted)]">{reason.label}</span>
+                    <span className="shrink-0 font-semibold tabular-nums">+{reason.points}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {lead.scoreHistory.length > 1 && (
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <h3 className="text-sm font-semibold">Score history</h3>
+              <ul className="mt-3 space-y-2">
+                {lead.scoreHistory.slice(0, 5).map((entry) => (
+                  <li key={entry.id} className="flex flex-col gap-1 rounded-xl bg-white/[0.025] px-3.5 py-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+                    <span className="font-medium">{entry.totalScore} points <span className="font-normal text-[var(--text-muted)]">· {formatDate(entry.createdAt)}</span></span>
+                    <span className="text-xs leading-5 text-[var(--text-muted)]">
+                      {entry.reasons.filter((reason) => reason.points > 0).map((reason) => reason.label).join(" · ") || "No positive signals recorded"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
         {error && (
@@ -691,6 +793,30 @@ const ownerPageStyle = {
                     ))}
                   </select>
                 </div>
+
+                {activityType === "MEETING" && lead.consultations.length > 0 && (
+                  <div>
+                    <label htmlFor="activity-consultation" className={labelClass}>
+                      Link consultation (optional)
+                    </label>
+                    <select
+                      id="activity-consultation"
+                      value={activityConsultationId}
+                      onChange={(event) => setActivityConsultationId(event.target.value)}
+                      className={fieldClass}
+                    >
+                      <option value="" className="bg-[#10131C] text-white">No linked consultation</option>
+                      {lead.consultations.map((consultation) => (
+                        <option key={consultation.id} value={consultation.id} className="bg-[#10131C] text-white">
+                          {consultation.title} · {formatDate(consultation.scheduledAt)}
+                        </option>
+                      ))}
+                    </select>
+                    <p className={`mt-2 text-xs leading-5 ${mutedClass}`}>
+                      Linking the meeting prevents a completed consultation from being counted twice.
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <label htmlFor="activity-title" className={labelClass}>

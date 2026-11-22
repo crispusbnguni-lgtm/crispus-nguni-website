@@ -2,10 +2,14 @@
 import { NextResponse } from "next/server";
 import argon2 from "argon2";
 import { prisma } from "@/lib/prisma";
-import { createSession } from "@/lib/auth";
+import { logSuperAdminVerificationExemption } from "@/lib/auth";
+import { completePrimaryAuthentication, setPendingAuthenticationCookie } from "@/lib/auth-completion";
 import { checkAuthRateLimit } from "@/lib/rate-limit";
+import { canSkipAdditionalIdentityVerification } from "@/lib/auth-verification-policy";
+import { reportAuthOperationFailure, type AuthDiagnosticOperation } from "@/lib/auth-diagnostics";
 
 export async function POST(request: Request) {
+  let diagnosticOperation: AuthDiagnosticOperation = "LOGIN_ACCOUNT_LOOKUP";
   try {
     let body: Record<string, unknown>;
 
@@ -103,9 +107,18 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.findUnique({
       where: { email },
+      include: {
+        identities: {
+          where: { provider: "EMAIL" },
+          select: {
+            providerSubject: true,
+            verifiedAt: true,
+          },
+        },
+      },
     });
 
-    if (!user) {
+    if (!user || !user.passwordHash) {
       return NextResponse.json(
         {
           success: false,
@@ -115,6 +128,7 @@ export async function POST(request: Request) {
       );
     }
 
+    diagnosticOperation = "LOGIN_PASSWORD_VERIFY";
     const passwordValid = await argon2.verify(
       user.passwordHash,
       password,
@@ -130,25 +144,44 @@ export async function POST(request: Request) {
       );
     }
 
-    await createSession(user.id, request);
-
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Login successful.",
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
-      },
-      {
-        headers: { "Cache-Control": "no-store" },
-      },
+    const emailIdentity = user.identities.find(
+      (identity) => identity.providerSubject === email,
     );
+
+    if (
+      !canSkipAdditionalIdentityVerification(user.role) &&
+      (!user.emailVerifiedAt ||
+        (user.identities.length > 0 &&
+          (!emailIdentity || !emailIdentity.verifiedAt)))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Please verify your email address before signing in. Check your inbox for the verification link.",
+        },
+        {
+          status: 403,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+    }
+    if (canSkipAdditionalIdentityVerification(user.role) && (!user.emailVerifiedAt || !emailIdentity?.verifiedAt)) {
+      await logSuperAdminVerificationExemption(user.id, "EMAIL", {
+        emailVerified: Boolean(user.emailVerifiedAt && emailIdentity?.verifiedAt),
+      });
+    }
+    diagnosticOperation = "LOGIN_MFA_COMPLETION";
+    const completion = await completePrimaryAuthentication(request, { userId: user.id, method: "EMAIL" });
+    const response = NextResponse.json(
+      completion.status === "session"
+        ? { success: true, message: "Login successful.", user: { id: user.id, name: user.name, email: user.email, role: user.role } }
+        : { success: true, pending: completion.status, next: completion.status === "enrollment" ? "/mfa/enroll" : "/mfa/challenge" },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+    if (completion.status !== "session") setPendingAuthenticationCookie(response, completion);
+    return response;
   } catch (error) {
-    console.error("Login error:", error);
+    reportAuthOperationFailure(diagnosticOperation, error);
 
     return NextResponse.json(
       {

@@ -2,8 +2,9 @@
 import { NextResponse } from "next/server";
 import argon2 from "argon2";
 import { prisma } from "@/lib/prisma";
-import { createSession } from "@/lib/auth";
 import { checkAuthRateLimit } from "@/lib/rate-limit";
+import { createEmailActionToken } from "@/lib/email-action-tokens";
+import { sendVerificationEmail } from "@/lib/auth-email";
 
 function createSlug(name: string) {
   const baseSlug = name
@@ -13,6 +14,108 @@ function createSlug(name: string) {
     .replace(/^-+|-+$/g, "");
 
   return `${baseSlug || "portfolio"}-${Date.now().toString(36)}`;
+}
+
+function neutralSignupResponse() {
+  return NextResponse.json(
+    {
+      success: true,
+      message:
+        "If signup can proceed, further instructions will be communicated by email.",
+      verificationRequired: true,
+    },
+    {
+      status: 201,
+      headers: { "Cache-Control": "no-store" },
+    },
+  );
+}
+
+function isDuplicateEmailConstraint(error: unknown) {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    !("code" in error) ||
+    error.code !== "P2002" ||
+    !("meta" in error)
+  ) {
+    return false;
+  }
+
+  const meta = error.meta;
+
+  if (!meta || typeof meta !== "object") return false;
+
+  const adapterError =
+    "driverAdapterError" in meta
+      ? meta.driverAdapterError
+      : undefined;
+
+  if (
+    !adapterError ||
+    typeof adapterError !== "object" ||
+    !("cause" in adapterError)
+  ) {
+    return false;
+  }
+
+  const cause = adapterError.cause;
+
+  if (
+    !cause ||
+    typeof cause !== "object" ||
+    !("kind" in cause) ||
+    cause.kind !== "UniqueConstraintViolation" ||
+    !("constraint" in cause)
+  ) {
+    return false;
+  }
+
+  const constraint = cause.constraint;
+
+  if (!constraint || typeof constraint !== "object") return false;
+
+  const reportedTables = [
+    "table" in cause ? cause.table : undefined,
+    "table" in meta ? meta.table : undefined,
+  ].filter((table) => table !== undefined);
+
+  const reportedModels = [
+    "modelName" in cause ? cause.modelName : undefined,
+    "modelName" in meta ? meta.modelName : undefined,
+  ].filter((model) => model !== undefined);
+
+  if (
+    reportedTables.some((table) => table !== "User") ||
+    reportedModels.some((model) => model !== "User")
+  ) {
+    return false;
+  }
+
+  if ("index" in constraint && constraint.index === "User_email_key") {
+    return (
+      !("fields" in constraint) ||
+      (Array.isArray(constraint.fields) &&
+        constraint.fields.length === 1 &&
+        constraint.fields[0] === "email")
+    );
+  }
+
+  const physicalTable =
+    "table" in cause && cause.table !== undefined
+      ? cause.table
+      : "table" in meta
+        ? meta.table
+        : undefined;
+
+  return (
+    !("index" in constraint) &&
+    "fields" in constraint &&
+    Array.isArray(constraint.fields) &&
+    constraint.fields.length === 1 &&
+    constraint.fields[0] === "email" &&
+    physicalTable === "User"
+  );
 }
 
 export async function POST(request: Request) {
@@ -83,6 +186,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Please enter a valid email address.",
+        },
+        { status: 400 },
+      );
+    }
+
     if (password.length < 8) {
       return NextResponse.json(
         {
@@ -135,68 +248,95 @@ export async function POST(request: Request) {
     });
 
     if (existingUser) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "An account with that email already exists.",
-        },
-        { status: 409 },
-      );
+      return neutralSignupResponse();
     }
 
     const passwordHash = await argon2.hash(password);
     const slug = createSlug(name);
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        passwordHash,
-        role: "USER",
-        portfolioSite: {
-          create: {
-            name,
-            title: "Professional Portfolio",
-            bio: "Welcome to my professional portfolio.",
-            slug,
-            published: false,
+    let user;
+
+    try {
+      user = await prisma.user.create({
+        data: {
+          name,
+          email,
+          passwordHash,
+          role: "USER",
+          identities: {
+            create: {
+              provider: "EMAIL",
+              providerSubject: email,
+              identifier: email,
+            },
+          },
+          portfolioSite: {
+            create: {
+              name,
+              title: "Professional Portfolio",
+              bio: "Welcome to my professional portfolio.",
+              slug,
+              published: false,
+            },
           },
         },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
-
-    await createSession(user.id, request);
-
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Account created successfully.",
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+        select: {
+          id: true,
+          name: true,
+          email: true,
         },
-      },
-      {
-        status: 201,
-        headers: { "Cache-Control": "no-store" },
-      },
-    );
-  } catch (error) {
-    console.error("Signup error:", error);
+      });
+    } catch (error) {
+      if (isDuplicateEmailConstraint(error)) {
+        return neutralSignupResponse();
+      }
+
+      throw error;
+    }
+
+    try {
+      const token = await createEmailActionToken({
+        userId: user.id,
+        purpose: "VERIFY_EMAIL",
+        expiresInMinutes: 30,
+      });
+
+      await sendVerificationEmail({
+        to: email,
+        name,
+        token,
+      });
+    } catch (deliveryError) {
+      console.error(
+        "Signup verification could not be completed. Cleaning up pending account.",
+      );
+
+      try {
+        await prisma.user.deleteMany({
+          where: {
+            id: user.id,
+            email,
+            emailVerifiedAt: null,
+          },
+        });
+      } catch {
+        console.error(
+          "Pending signup cleanup failed. Manual investigation may be required.",
+        );
+      }
+
+      throw deliveryError;
+    }
+
+    return neutralSignupResponse();
+  } catch {
+    console.error("Signup request failed.");
 
     return NextResponse.json(
       {
         success: false,
         message:
-          "Something went wrong while creating your account.",
+          "We could not complete your signup. Please try again shortly.",
       },
       {
         status: 500,

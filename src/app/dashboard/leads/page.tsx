@@ -5,17 +5,18 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/authorization";
 import { LiquidLensSurface } from "@/components/ui/LiquidLensSurface";
 import { MotionReveal } from "@/components/ui/MotionReveal";
+import { refreshDueLeadScores } from "@/lib/lead-crm";
+import { leadPortfolioScope } from "@/lib/lead-access";
+import {
+  LEADS_PER_PAGE,
+  parseLeadPage,
+  resolveLeadPage,
+  singleQueryValue,
+} from "@/lib/lead-dashboard";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Promise<{
-  q?: string;
-  status?: string;
-  temperature?: string;
-  source?: string;
-  sort?: string;
-  page?: string;
-}>;
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const STATUSES = [
   "NEW",
@@ -40,10 +41,14 @@ const SOURCES = [
   "MANUAL",
   "EMAIL",
   "ADVERTISEMENT",
+  "SOCIAL_MEDIA",
+  "EVENT",
+  "WALK_IN",
+  "CAMPAIGN",
   "OTHER",
 ] as const;
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = LEADS_PER_PAGE;
 
 type LeadRecord = Prisma.LeadGetPayload<{
   select: {
@@ -54,6 +59,7 @@ type LeadRecord = Prisma.LeadGetPayload<{
     company: true;
     interestedIn: true;
     source: true;
+    origin: true;
     status: true;
     temperature: true;
     score: true;
@@ -138,45 +144,39 @@ export default async function LeadsPage({
   searchParams: SearchParams;
 }) {
   const user = await requireUser();
+  await refreshDueLeadScores(leadPortfolioScope(user));
   const params = await searchParams;
 
-  const q = (params.q ?? "").trim().slice(0, 100);
+  const q = singleQueryValue(params.q).trim().slice(0, 100);
+  const requestedStatus = singleQueryValue(params.status);
+  const requestedTemperature = singleQueryValue(params.temperature);
+  const requestedSource = singleQueryValue(params.source);
+  const requestedSort = singleQueryValue(params.sort);
 
-  const status = validChoice(params.status, STATUSES)
-    ? params.status
+  const status = validChoice(requestedStatus, STATUSES)
+    ? requestedStatus
     : "";
 
-  const temperature = validChoice(params.temperature, TEMPERATURES)
-    ? params.temperature
+  const temperature = validChoice(requestedTemperature, TEMPERATURES)
+    ? requestedTemperature
     : "";
 
-  const source = validChoice(params.source, SOURCES)
-    ? params.source
+  const source = validChoice(requestedSource, SOURCES)
+    ? requestedSource
     : "";
 
   const sort = ["newest", "oldest", "score", "name"].includes(
-    params.sort ?? "",
+    requestedSort,
   )
-    ? params.sort!
+    ? requestedSort
     : "newest";
 
-  const requestedPage = Number.parseInt(params.page ?? "1", 10);
-  const page = Number.isFinite(requestedPage)
-    ? Math.max(1, Math.min(requestedPage, 100000))
-    : 1;
+  const requestedPage = parseLeadPage(params.page);
 
   // Regular users only see leads associated with their own portfolio.
   // SUPER_ADMIN can inspect leads across all accounts.
   const where: Prisma.LeadWhereInput = {
-    ...(user.role === "SUPER_ADMIN"
-      ? {}
-      : {
-          portfolio: {
-            is: {
-              userId: user.id,
-            },
-          },
-        }),
+    ...leadPortfolioScope(user),
     ...(status ? { status: status as (typeof STATUSES)[number] } : {}),
     ...(temperature
       ? { temperature: temperature as (typeof TEMPERATURES)[number] }
@@ -194,17 +194,35 @@ export default async function LeadsPage({
         }
       : {}),
   };
+  const scope = leadPortfolioScope(user);
+  const overviewNow = new Date();
+  const openLeadStatuses = ["NEW", "CONTACTED", "QUALIFIED"] as const;
+  const nonTerminalStatuses = ["CONVERTED", "LOST", "DISQUALIFIED"] as const;
 
   const orderBy: Prisma.LeadOrderByWithRelationInput[] =
     sort === "oldest"
       ? [{ createdAt: "asc" }, { id: "asc" }]
       : sort === "score"
-        ? [{ score: "desc" }, { createdAt: "desc" }]
+        ? [{ score: "desc" }, { createdAt: "desc" }, { id: "desc" }]
         : sort === "name"
-          ? [{ name: "asc" }, { createdAt: "desc" }]
+          ? [{ name: "asc" }, { createdAt: "desc" }, { id: "desc" }]
           : [{ createdAt: "desc" }, { id: "desc" }];
 
-  const [total, hotCount, qualifiedCount, convertedCount, leads] =
+  const [
+    total,
+    hotCount,
+    qualifiedCount,
+    convertedCount,
+    allLeadCount,
+    newLeadCount,
+    followUpLeadCount,
+    activeOpportunityCount,
+    allQualifiedCount,
+    allConvertedCount,
+    closedLeadCount,
+    overdueFollowUpCount,
+    recentActivities,
+  ] =
     await Promise.all([
       prisma.lead.count({ where }),
       prisma.lead.count({
@@ -216,10 +234,49 @@ export default async function LeadsPage({
       prisma.lead.count({
         where: { ...where, status: "CONVERTED" },
       }),
-      prisma.lead.findMany({
+      prisma.lead.count({ where: scope }),
+      prisma.lead.count({ where: { ...scope, status: "NEW" } }),
+      prisma.lead.count({
+        where: {
+          ...scope,
+          status: { notIn: [...nonTerminalStatuses] },
+          nextFollowUpAt: { not: null },
+        },
+      }),
+      prisma.lead.count({
+        where: { ...scope, status: { in: [...openLeadStatuses] } },
+      }),
+      prisma.lead.count({ where: { ...scope, status: "QUALIFIED" } }),
+      prisma.lead.count({ where: { ...scope, status: "CONVERTED" } }),
+      prisma.lead.count({
+        where: { ...scope, status: { in: ["LOST", "DISQUALIFIED"] } },
+      }),
+      prisma.lead.count({
+        where: {
+          ...scope,
+          status: { notIn: [...nonTerminalStatuses] },
+          nextFollowUpAt: { lte: overviewNow },
+        },
+      }),
+      prisma.leadActivity.findMany({
+        where: { lead: { is: scope } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 5,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          createdAt: true,
+          lead: { select: { id: true, name: true } },
+        },
+      }),
+    ]);
+
+  const pageState = resolveLeadPage(requestedPage, total);
+  const leads = await prisma.lead.findMany({
         where,
         orderBy,
-        skip: (page - 1) * PAGE_SIZE,
+        skip: pageState.skip,
         take: PAGE_SIZE,
         select: {
           id: true,
@@ -229,6 +286,7 @@ export default async function LeadsPage({
           company: true,
           interestedIn: true,
           source: true,
+          origin: true,
           status: true,
           temperature: true,
           score: true,
@@ -247,22 +305,27 @@ export default async function LeadsPage({
             },
           },
         },
-      }),
-    ]);
+      });
 
   // Explicitly type the query result for both desktop and mobile lists.
   const typedLeads: LeadRecord[] = leads;
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
+  const { page: safePage, totalPages } = pageState;
 
-  const queryState: Record<string, string> = {
-    ...(q ? { q } : {}),
-    ...(status ? { status } : {}),
-    ...(temperature ? { temperature } : {}),
-    ...(source ? { source } : {}),
-    ...(sort !== "newest" ? { sort } : {}),
-  };
+const queryState: Record<string, string> = {
+  ...(q ? { q } : {}),
+  ...(status ? { status } : {}),
+  ...(temperature ? { temperature } : {}),
+  ...(source ? { source } : {}),
+  ...(sort !== "newest" ? { sort } : {}),
+};
+
+// Export all matching leads using the active filters.
+// Pagination is intentionally excluded.
+const exportParams = new URLSearchParams(queryState);
+const exportHref = exportParams.size > 0
+  ? `/api/dashboard/leads/export?${exportParams.toString()}`
+  : "/api/dashboard/leads/export";
 
   const summaryCards = [
     {
@@ -293,6 +356,17 @@ export default async function LeadsPage({
       accent: "text-emerald-300",
       icon: "↗",
     },
+  ];
+
+  const overviewCards = [
+    { title: "All leads", value: allLeadCount, detail: "In your workspace" },
+    { title: "New", value: newLeadCount, detail: "Awaiting first contact" },
+    { title: "Follow-ups", value: followUpLeadCount, detail: "Scheduled and open" },
+    { title: "Qualified", value: allQualifiedCount, detail: "Across all filters" },
+    { title: "Active opportunities", value: activeOpportunityCount, detail: "New, contacted or qualified" },
+    { title: "Converted", value: allConvertedCount, detail: "Successful outcomes" },
+    { title: "Closed / lost", value: closedLeadCount, detail: "Disqualified or lost" },
+    { title: "Overdue", value: overdueFollowUpCount, detail: "Open follow-ups past due" },
   ];
 
   return (
@@ -338,6 +412,13 @@ export default async function LeadsPage({
               <span className="liquid-glass inline-flex items-center rounded-xl px-4 py-2 text-sm text-[var(--text-muted)]">
                 {total} matching lead{total === 1 ? "" : "s"}
               </span>
+              <Link
+                href="/dashboard/leads/new"
+                className={`${glassButton} !border-[var(--accent,#D9A441)]/40 !bg-[var(--accent,#D9A441)]/10 !text-[var(--accent-foreground,#E7BD68)] hover:!bg-[var(--accent,#D9A441)]/20`}
+              >
+                <span aria-hidden="true">＋</span>
+                Add new lead
+              </Link>
             </div>
           </div>
         </MotionReveal>
@@ -380,6 +461,47 @@ export default async function LeadsPage({
               </LiquidLensSurface>
             </MotionReveal>
           ))}
+        </section>
+
+        <section aria-label="CRM overview" className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold text-[var(--text-muted)]">Workspace overview</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+            {overviewCards.map((item) => (
+              <LiquidLensSurface key={item.title} radius={16} intensity="subtle" className="min-w-0 p-3 sm:p-4">
+                <p className={`text-xs ${mutedText}`}>{item.title}</p>
+                <p className="mt-2 text-xl font-semibold tabular-nums">{item.value}</p>
+                <p className={`mt-1 text-[11px] leading-4 ${mutedText}`}>{item.detail}</p>
+              </LiquidLensSurface>
+            ))}
+          </div>
+        </section>
+
+        <section aria-label="Recent lead activity" className="mb-8">
+          <LiquidLensSurface radius={20} intensity="subtle" className="p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold">Recent activity</h2>
+              <span className={`text-xs ${mutedText}`}>Latest five updates</span>
+            </div>
+            {recentActivities.length === 0 ? (
+              <p className={`text-sm ${mutedText}`}>Lead activity will appear here as your team works through the inbox.</p>
+            ) : (
+              <ul className="divide-y divide-white/[0.07]">
+                {recentActivities.map((activity) => (
+                  <li key={activity.id} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm">
+                      <Link className="font-medium hover:text-[var(--accent,#D9A441)]" href={`/dashboard/leads/${encodeURIComponent(activity.lead.id)}`}>
+                        {activity.lead.name}
+                      </Link>
+                      <span className={`ml-2 ${mutedText}`}>{activity.title}</span>
+                    </p>
+                    <time className={`text-xs ${mutedText}`} dateTime={activity.createdAt.toISOString()}>
+                      {formatDate(activity.createdAt)}
+                    </time>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </LiquidLensSurface>
         </section>
 
         {/* Search and filters */}
@@ -530,18 +652,41 @@ export default async function LeadsPage({
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
-                <button
-                  type="submit"
-                  className={`${glassButton} !border-[var(--accent,#D9A441)]/40 !bg-[var(--accent,#D9A441)]/10 !text-[var(--accent-foreground,#E7BD68)] hover:!bg-[var(--accent,#D9A441)]/20`}
-                >
-                  Apply filters
-                  <span aria-hidden="true">→</span>
-                </button>
+  <button
+    type="submit"
+    className={`${glassButton} !border-[var(--accent,#D9A441)]/40 !bg-[var(--accent,#D9A441)]/10 !text-[var(--accent-foreground,#E7BD68)] hover:!bg-[var(--accent,#D9A441)]/20`}
+  >
+    Apply filters
+    <span aria-hidden="true">→</span>
+  </button>
 
-                <Link href="/dashboard/leads" className={glassButton}>
-                  Clear filters
-                </Link>
-              </div>
+  <Link
+    href={exportHref}
+    prefetch={false}
+    className={glassButton}
+    aria-label="Export all matching leads to CSV"
+  >
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+    Export matching leads
+  </Link>
+
+  <Link href="/dashboard/leads" className={glassButton}>
+    Clear filters
+  </Link>
+</div>
             </form>
           </LiquidLensSurface>
         </MotionReveal>
@@ -660,7 +805,10 @@ export default async function LeadsPage({
                           )}
 
                           <td className={`px-5 py-4 text-sm ${mutedText}`}>
-                            {label(lead.source)}
+                            <span className="block">{label(lead.source)}</span>
+                            <span className="mt-1 block text-[10px] text-[var(--text-muted)]">
+                              {label(lead.origin)}
+                            </span>
                           </td>
 
                           <td className="px-5 py-4">
@@ -750,6 +898,9 @@ export default async function LeadsPage({
 
                           <span className="inline-flex rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-xs text-[var(--text-muted)]">
                             {label(lead.source)}
+                          </span>
+                          <span className="inline-flex rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-xs text-[var(--text-muted)]">
+                            {label(lead.origin)}
                           </span>
                         </div>
 

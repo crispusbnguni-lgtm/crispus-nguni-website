@@ -11,59 +11,16 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import {
+  DEFAULT_DISPLAY_STUDIO_PREFERENCES,
+  type DisplayStudioPreferences,
+  resolveDisplayStudioPreferences,
+  sanitizeDisplayStudioPreferences,
+  setDisplayStudioPreferenceOverride,
+} from "@/lib/display-studio-preferences";
 
-export type ReaderPreferences = {
-  textScale: number;
-  readingWidth: "normal" | "wide";
-  fontFamily:
-    | "one-ui"
-    | "samsung-one"
-    | "inter"
-    | "geist"
-    | "system"
-    | "serif"
-    | "mono";
-
-  glassLevel: number;
-  frostLevel: number;
-  transparency: number;
-  reflectionLevel: number;
-  glassDepth: number;
-
-  appearancePreset: "crispus" | "crystal" | "emerald" | "light";
-
-  lineHeight: "normal" | "relaxed" | "loose";
-  letterSpacing: "normal" | "wide" | "wider";
-  colorMode: "dark" | "light" | "sepia";
-  highContrast: boolean;
-  reduceMotion: boolean;
-  reduceTransparency: boolean;
-  underlineLinks: boolean;
-  focusMode: boolean;
-};
-
-export const defaultReaderPreferences: ReaderPreferences = {
-  textScale: 1,
-  readingWidth: "normal",
-  fontFamily: "one-ui",
-
-  glassLevel: 0.72,
-  frostLevel: 0,
-  transparency: 0.72,
-  reflectionLevel: 0.65,
-  glassDepth: 0.65,
-
-  appearancePreset: "crispus",
-
-  lineHeight: "normal",
-  letterSpacing: "normal",
-  colorMode: "dark",
-  highContrast: false,
-  reduceMotion: false,
-  reduceTransparency: false,
-  underlineLinks: false,
-  focusMode: false,
-};
+export type ReaderPreferences = DisplayStudioPreferences;
+export const defaultReaderPreferences = DEFAULT_DISPLAY_STUDIO_PREFERENCES;
 
 const STORAGE_KEY = "reader-preferences";
 const listeners = new Set<() => void>();
@@ -420,11 +377,14 @@ function parsePreferenceOverrides(
 
 type ReaderContextValue = {
   preferences: ReaderPreferences;
+  globalDefaultsConfigured: boolean;
+  globalDefaultsStatus: "loading" | "available" | "unavailable";
+  overriddenPreferenceKeys: readonly (keyof ReaderPreferences)[];
   updatePreference: <K extends keyof ReaderPreferences>(
     key: K,
     value: ReaderPreferences[K],
-  ) => void;
-  resetPreferences: () => void;
+  ) => boolean;
+  resetPreferences: () => boolean;
 };
 
 const ReaderContext = createContext<ReaderContextValue | null>(null);
@@ -438,55 +398,70 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
 
   const [globalPreferences, setGlobalPreferences] =
     useState<ReaderPreferences>(defaultReaderPreferences);
+  const [globalDefaultsConfigured, setGlobalDefaultsConfigured] = useState(false);
+  const [globalDefaultsStatus, setGlobalDefaultsStatus] = useState<
+    ReaderContextValue["globalDefaultsStatus"]
+  >("loading");
 
   // Load the latest defaults configured by the Super Admin.
   useEffect(() => {
     let active = true;
 
     async function loadGlobalPreferences() {
+      setGlobalDefaultsStatus("loading");
       try {
-        const response = await fetch("/api/display-studio", {
+        const response = await fetch("/api/display-studio/defaults", {
           method: "GET",
           cache: "no-store",
         });
 
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (active) setGlobalDefaultsStatus("unavailable");
+          return;
+        }
 
         const data = (await response.json()) as {
           preferences?: Partial<ReaderPreferences>;
+          configured?: boolean;
         };
 
-        if (!active || !data.preferences) return;
+        if (!active || !data.preferences) {
+          if (active) setGlobalDefaultsStatus("unavailable");
+          return;
+        }
 
-        setGlobalPreferences(
-          parsePreferences(
-            JSON.stringify({
-              ...defaultReaderPreferences,
-              ...data.preferences,
-            }),
-          ),
-        );
+        setGlobalPreferences(sanitizeDisplayStudioPreferences(data.preferences));
+        setGlobalDefaultsConfigured(data.configured === true);
+        setGlobalDefaultsStatus("available");
       } catch {
-        // Keep the built-in defaults if the API is unavailable.
+        if (active) setGlobalDefaultsStatus("unavailable");
       }
     }
 
+    const handleDefaultsUpdated = () => {
+      void loadGlobalPreferences();
+    };
+
+    window.addEventListener("display-studio:defaults-updated", handleDefaultsUpdated);
     void loadGlobalPreferences();
 
     return () => {
       active = false;
+      window.removeEventListener("display-studio:defaults-updated", handleDefaultsUpdated);
     };
   }, []);
 
   const preferences = useMemo(
     () =>
-      parsePreferences(
-        JSON.stringify({
-          ...globalPreferences,
-          ...parsePreferenceOverrides(snapshot),
-        }),
+      resolveDisplayStudioPreferences(
+        globalPreferences,
+        parsePreferenceOverrides(snapshot),
       ),
     [snapshot, globalPreferences],
+  );
+  const overriddenPreferenceKeys = useMemo(
+    () => Object.keys(parsePreferenceOverrides(snapshot)) as Array<keyof ReaderPreferences>,
+    [snapshot],
   );
 
   useEffect(() => {
@@ -515,19 +490,16 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
       key: K,
       value: ReaderPreferences[K],
     ) {
-      const overrides = parsePreferenceOverrides(getClientSnapshot());
+      const overrides = setDisplayStudioPreferenceOverride(
+        globalPreferences,
+        parsePreferenceOverrides(getClientSnapshot()),
+        key,
+        value,
+      );
 
-      if (Object.is(value, globalPreferences[key])) {
-        delete overrides[key];
-      } else {
-        Object.assign(overrides, { [key]: value });
-      }
-
-      const nextPreferences = parsePreferences(
-        JSON.stringify({
-          ...globalPreferences,
-          ...overrides,
-        }),
+      const nextPreferences = resolveDisplayStudioPreferences(
+        globalPreferences,
+        overrides,
       );
 
       try {
@@ -539,11 +511,14 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
           }),
         );
       } catch {
-        // Apply the setting even if browser storage is unavailable.
+        applyReaderPreferences(nextPreferences);
+        notifyListeners();
+        return false;
       }
 
       applyReaderPreferences(nextPreferences);
       notifyListeners();
+      return true;
     },
     [globalPreferences],
   );
@@ -552,20 +527,26 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {
-      // Still reset the current interface if storage is unavailable.
+      applyReaderPreferences(globalPreferences);
+      notifyListeners();
+      return false;
     }
 
     applyReaderPreferences(globalPreferences);
     notifyListeners();
+    return true;
   }, [globalPreferences]);
 
   const contextValue = useMemo(
     () => ({
       preferences,
+      globalDefaultsConfigured,
+      globalDefaultsStatus,
+      overriddenPreferenceKeys,
       updatePreference,
       resetPreferences,
     }),
-    [preferences, updatePreference, resetPreferences],
+    [preferences, globalDefaultsConfigured, globalDefaultsStatus, overriddenPreferenceKeys, updatePreference, resetPreferences],
   );
 
   return (

@@ -1,4 +1,5 @@
-import Image from "next/image";
+import { PortfolioImage } from "@/components/portfolio/PortfolioImage";
+import { safePortfolioExternalLink } from "@/lib/portfolio-public";
 
 type Project = {
   id: string;
@@ -75,16 +76,20 @@ export function ProjectsSection({
                       : "aspect-[16/10]"
                   }`}
                 >
-                  <Image
+                  <PortfolioImage
                     src={project.image}
                     alt={project.title}
-                    fill
                     sizes={
                       project.featured
                         ? "(max-width: 768px) 100vw, (max-width: 1024px) 100vw, 66vw"
                         : "(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
                     }
                     className="object-cover transition duration-700 group-hover:scale-105"
+                    fallback={(
+                      <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#071A46] via-[#0b1230] to-[#05070D]" aria-hidden="true">
+                        <span className="text-3xl text-[#126BFF]/70">✦</span>
+                      </div>
+                    )}
                   />
 
                   <div className="absolute inset-0 bg-gradient-to-t from-[#05070D]/80 via-transparent to-transparent" />
@@ -159,9 +164,9 @@ export function ProjectsSection({
                   </div>
                 )}
 
-                {project.link && (
+                {safePortfolioExternalLink(project.link) && (
                   <a
-                    href={project.link}
+                    href={safePortfolioExternalLink(project.link)!}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-7 inline-flex items-center text-sm font-medium text-[#126BFF] transition hover:text-white"

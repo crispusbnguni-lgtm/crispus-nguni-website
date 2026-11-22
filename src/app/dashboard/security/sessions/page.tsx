@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import PasskeyManagement from "./PasskeyManagement";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -226,7 +227,7 @@ export default function SessionsPage() {
             href="/dashboard"
             className="text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
           >
-            ← Back to workspace
+            â† Back to workspace
           </Link>
 
           <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -319,6 +320,8 @@ export default function SessionsPage() {
             </button>
           </div>
         </section>
+
+        <PasskeyManagement />
 
         {error && (
           <div

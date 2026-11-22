@@ -1,4 +1,22 @@
+﻿
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
+
+import {
+  getTimezoneParts,
+  getZonedDateTimeCandidates,
+  isValidIanaTimezone,
+  zonedDateTimeToUtc,
+  getZonedDayRange,
+} from "./timezone-core";
+
+export {
+  getZonedDateTimeCandidates,
+  getZonedDayRange,
+  isValidIanaTimezone,
+  zonedDateTimeToUtc,
+};
 
 export type AvailabilitySlot = {
   start: Date;
@@ -11,6 +29,7 @@ type GetAvailabilitySlotsInput = {
   consultationTypeId: string;
   startDate: Date;
   endDate: Date;
+  client?: Prisma.TransactionClient;
 };
 
 type ConsultationTypeConfig = {
@@ -26,7 +45,6 @@ type AvailabilityRuleConfig = {
   dayOfWeek: number;
   startTime: string;
   endTime: string;
-  timezone: string;
   enabled: boolean;
 };
 
@@ -46,22 +64,11 @@ type ExistingConsultation = {
   };
 };
 
-function startOfUtcDay(date: Date) {
-  return new Date(
-    Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-    ),
-  );
-}
-
 function addUtcDays(date: Date, days: number) {
   const result = new Date(date);
   result.setUTCDate(result.getUTCDate() + days);
   return result;
 }
-
 
 function overlaps(
   startA: Date,
@@ -91,123 +98,11 @@ function isValidTime(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function getTimezoneParts(
-  date: Date,
-  timezone: string,
-) {
-  const formatter = new Intl.DateTimeFormat(
-    "en-CA",
-    {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    },
-  );
-
-  const parts = formatter.formatToParts(date);
-
-  const values: Record<string, string> = {};
-
-  for (const part of parts) {
-    if (part.type !== "literal") {
-      values[part.type] = part.value;
-    }
-  }
-
-  return {
-    year: Number(values.year),
-    month: Number(values.month),
-    day: Number(values.day),
-    hour: Number(values.hour),
-    minute: Number(values.minute),
-    second: Number(values.second),
-  };
-}
-
-function getTimezoneOffsetMilliseconds(
-  date: Date,
-  timezone: string,
-) {
-  const parts = getTimezoneParts(
-    date,
-    timezone,
-  );
-
-  const utcRepresentation = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second,
-  );
-
-  return (
-    utcRepresentation -
-    date.getTime()
-  );
-}
-
-function zonedDateTimeToUtc(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  timezone: string,
-) {
-  const approximateUtc = new Date(
-    Date.UTC(
-      year,
-      month - 1,
-      day,
-      hour,
-      minute,
-      0,
-      0,
-    ),
-  );
-
-  const firstOffset =
-    getTimezoneOffsetMilliseconds(
-      approximateUtc,
-      timezone,
-    );
-
-  let result = new Date(
-    approximateUtc.getTime() -
-      firstOffset,
-  );
-
-  const secondOffset =
-    getTimezoneOffsetMilliseconds(
-      result,
-      timezone,
-    );
-
-  if (secondOffset !== firstOffset) {
-    result = new Date(
-      approximateUtc.getTime() -
-        secondOffset,
-    );
-  }
-
-  return result;
-}
-
 function getLocalDayOfWeek(
   date: Date,
   timezone: string,
 ) {
-  const parts = getTimezoneParts(
-    date,
-    timezone,
-  );
+  const parts = getTimezoneParts(date, timezone);
 
   return new Date(
     Date.UTC(
@@ -222,14 +117,9 @@ function getLocalDateKey(
   date: Date,
   timezone: string,
 ) {
-  const parts = getTimezoneParts(
-    date,
-    timezone,
-  );
+  const parts = getTimezoneParts(date, timezone);
 
-  return `${parts.year}-${String(
-    parts.month,
-  ).padStart(2, "0")}-${String(
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(
     parts.day,
   ).padStart(2, "0")}`;
 }
@@ -239,34 +129,41 @@ function getExceptionForDate(
   date: Date,
   timezone: string,
 ) {
-  const localDateKey = getLocalDateKey(
-    date,
-    timezone,
-  );
+  const localDateKey = getLocalDateKey(date, timezone);
 
-  return exceptions.find((exception) => {
-    const exceptionDate =
-      exception.date.toISOString().slice(0, 10);
+  const matches = exceptions.filter((exception) => {
+    const exceptionDate = exception.date.toISOString().slice(0, 10);
 
     return exceptionDate === localDateKey;
   });
+
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple availability exceptions exist for ${localDateKey}. Resolve the duplicate exceptions before generating availability.`,
+    );
+  }
+
+  return matches[0];
 }
 
 function getEffectivePeriods(
   date: Date,
-  rule: AvailabilityRuleConfig,
+  rules: AvailabilityRuleConfig[],
   exceptions: AvailabilityExceptionConfig[],
+  timezone: string,
 ) {
   const exception = getExceptionForDate(
     exceptions,
     date,
-    rule.timezone,
+    timezone,
   );
 
   if (exception?.type === "UNAVAILABLE") {
     return [];
   }
 
+  // Custom hours replace weekly hours for this local date.
+  // This also works when no weekly rules exist.
   if (
     exception?.type === "CUSTOM_HOURS" &&
     exception.startTime &&
@@ -276,28 +173,24 @@ function getEffectivePeriods(
       {
         startTime: exception.startTime,
         endTime: exception.endTime,
-        timezone: rule.timezone,
+        timezone,
       },
     ];
   }
 
-  if (
-    rule.enabled &&
-    getLocalDayOfWeek(
-      date,
-      rule.timezone,
-    ) === rule.dayOfWeek
-  ) {
-    return [
-      {
-        startTime: rule.startTime,
-        endTime: rule.endTime,
-        timezone: rule.timezone,
-      },
-    ];
-  }
+  const localDay = getLocalDayOfWeek(date, timezone);
 
-  return [];
+  return rules
+    .filter(
+      (rule) =>
+        rule.enabled &&
+        rule.dayOfWeek === localDay,
+    )
+    .map((rule) => ({
+      startTime: rule.startTime,
+      endTime: rule.endTime,
+      timezone,
+    }));
 }
 
 function buildCandidateSlots(
@@ -316,97 +209,92 @@ function buildCandidateSlots(
     return [];
   }
 
-  const [startHour, startMinute] =
-    period.startTime.split(":").map(Number);
+  const [startHour, startMinute] = period.startTime
+    .split(":")
+    .map(Number);
 
-  const [endHour, endMinute] =
-    period.endTime.split(":").map(Number);
+  const [endHour, endMinute] = period.endTime
+    .split(":")
+    .map(Number);
 
-  const dateParts =
-    getTimezoneParts(
-      date,
-      period.timezone,
-    );
+  const dateParts = getTimezoneParts(
+    date,
+    period.timezone,
+  );
 
-  const periodStart =
-    zonedDateTimeToUtc(
-      dateParts.year,
-      dateParts.month,
-      dateParts.day,
-      startHour,
-      startMinute,
-      period.timezone,
-    );
+  const startCandidates = getZonedDateTimeCandidates(
+    dateParts.year,
+    dateParts.month,
+    dateParts.day,
+    startHour,
+    startMinute,
+    period.timezone,
+  );
 
-  const periodEnd =
-    zonedDateTimeToUtc(
-      dateParts.year,
-      dateParts.month,
-      dateParts.day,
-      endHour,
-      endMinute,
-      period.timezone,
-    );
+  const endCandidates = getZonedDateTimeCandidates(
+    dateParts.year,
+    dateParts.month,
+    dateParts.day,
+    endHour,
+    endMinute,
+    period.timezone,
+  );
 
+  // Never shift nonexistent local availability boundaries
+  // into a different local time.
   if (
-    periodEnd.getTime() <=
-    periodStart.getTime()
+    startCandidates.length === 0 ||
+    endCandidates.length === 0
   ) {
     return [];
   }
 
-  const duration =
-    consultationType.durationMinutes;
+  // During a repeated hour, use the first occurrence for the
+  // opening boundary and the last occurrence for the closing
+  // boundary. This preserves the full UTC availability window.
+  const periodStart = startCandidates[0];
+  const periodEnd = endCandidates[endCandidates.length - 1];
 
-  const bufferBefore =
-    consultationType.bufferBeforeMinutes;
+  if (periodEnd.getTime() <= periodStart.getTime()) {
+    return [];
+  }
 
-  const bufferAfter =
-    consultationType.bufferAfterMinutes;
+  const duration = consultationType.durationMinutes;
+  const bufferBefore = consultationType.bufferBeforeMinutes;
+  const bufferAfter = consultationType.bufferAfterMinutes;
 
   const totalSlotMinutes =
-    bufferBefore +
-    duration +
-    bufferAfter;
+    bufferBefore + duration + bufferAfter;
 
-  const periodMinutes =
-    Math.floor(
-      (periodEnd.getTime() -
-        periodStart.getTime()) /
-        60000,
-    );
+  const periodMinutes = Math.floor(
+    (periodEnd.getTime() - periodStart.getTime()) / 60000,
+  );
 
   if (
-    periodMinutes <
-    totalSlotMinutes
+    totalSlotMinutes <= 0 ||
+    periodMinutes < totalSlotMinutes
   ) {
     return [];
   }
 
   const slots: AvailabilitySlot[] = [];
 
-  let cursor = new Date(
-    periodStart,
-  );
+  // Advance on the UTC timeline. During a fall-back transition,
+  // this naturally visits both occurrences of repeated local times.
+  let cursor = new Date(periodStart);
 
   while (
     Math.floor(
-      (periodEnd.getTime() -
-        cursor.getTime()) /
-        60000,
+      (periodEnd.getTime() - cursor.getTime()) / 60000,
     ) >= totalSlotMinutes
   ) {
-    const slotStart =
-      new Date(
-        cursor.getTime() +
-          bufferBefore * 60000,
-      );
+    const slotStart = new Date(
+      cursor.getTime() + bufferBefore * 60000,
+    );
 
-    const slotEnd =
-      new Date(
-        slotStart.getTime() +
-          duration * 60000,
-      );
+    const slotEnd = new Date(
+      slotStart.getTime() + duration * 60000,
+    );
 
     slots.push({
       start: slotStart,
@@ -414,11 +302,9 @@ function buildCandidateSlots(
       timezone: period.timezone,
     });
 
-    cursor =
-      new Date(
-        cursor.getTime() +
-          totalSlotMinutes * 60000,
-      );
+    cursor = new Date(
+      cursor.getTime() + totalSlotMinutes * 60000,
+    );
   }
 
   return slots;
@@ -427,36 +313,41 @@ function buildCandidateSlots(
 function removeOverlappingSlots(
   slots: AvailabilitySlot[],
   consultations: ExistingConsultation[],
+  candidateBufferBeforeMinutes: number,
+  candidateBufferAfterMinutes: number,
 ) {
   return slots.filter((slot) => {
-    return !consultations.some(
-      (consultation) => {
-        const consultationStart =
-          new Date(
-            consultation.scheduledAt.getTime() -
-              consultation.consultationType
-                .bufferBeforeMinutes *
-                60000,
-          );
+    return !consultations.some((consultation) => {
+      const consultationStart = new Date(
+        consultation.scheduledAt.getTime() -
+          consultation.consultationType.bufferBeforeMinutes *
+            60000,
+      );
 
-        const consultationEnd =
-          new Date(
-            consultation.scheduledAt.getTime() +
-              consultation.durationMinutes *
-                60000 +
-              consultation.consultationType
-                .bufferAfterMinutes *
-                60000,
-          );
+      const consultationEnd = new Date(
+        consultation.scheduledAt.getTime() +
+          consultation.durationMinutes * 60000 +
+          consultation.consultationType.bufferAfterMinutes *
+            60000,
+      );
 
-        return overlaps(
-          slot.start,
-          slot.end,
-          consultationStart,
-          consultationEnd,
-        );
-      },
-    );
+      const candidateStart = new Date(
+        slot.start.getTime() -
+          candidateBufferBeforeMinutes * 60000,
+      );
+
+      const candidateEnd = new Date(
+        slot.end.getTime() +
+          candidateBufferAfterMinutes * 60000,
+      );
+
+      return overlaps(
+        candidateStart,
+        candidateEnd,
+        consultationStart,
+        consultationEnd,
+      );
+    });
   });
 }
 
@@ -465,41 +356,70 @@ export async function getAvailabilitySlots({
   consultationTypeId,
   startDate,
   endDate,
-}: GetAvailabilitySlotsInput): Promise<
-  AvailabilitySlot[]
-> {
+  client,
+}: GetAvailabilitySlotsInput): Promise<AvailabilitySlot[]> {
   if (!portfolioId) {
-    throw new Error(
-      "Portfolio ID is required.",
-    );
+    throw new Error("Portfolio ID is required.");
   }
 
   if (!consultationTypeId) {
+    throw new Error("Consultation type ID is required.");
+  }
+
+  if (
+    !(startDate instanceof Date) ||
+    !(endDate instanceof Date) ||
+    !Number.isFinite(startDate.getTime()) ||
+    !Number.isFinite(endDate.getTime()) ||
+    startDate.getTime() >= endDate.getTime()
+  ) {
+    throw new Error("A valid availability date range is required.");
+  }
+
+  // Booking routes can pass their transaction client so availability
+  // reads participate in the same transaction as the booking operation.
+  const db = client ?? prisma;
+
+  const portfolio = await db.portfolioSite.findUnique({
+    where: { id: portfolioId },
+    select: {
+      timezone: true,
+      timezoneReviewRequired: true,
+    },
+  });
+
+  if (!portfolio) {
+    throw new Error("Portfolio not found.");
+  }
+
+  if (
+    portfolio.timezoneReviewRequired ||
+    !isValidIanaTimezone(portfolio.timezone)
+  ) {
     throw new Error(
-      "Consultation type ID is required.",
+      "The portfolio timezone requires review before booking can continue.",
     );
   }
 
-  const consultationType =
-    await prisma.consultationType.findFirst({
-      where: {
-        id: consultationTypeId,
-        portfolioId,
-      },
-      select: {
-        durationMinutes: true,
-        bufferBeforeMinutes: true,
-        bufferAfterMinutes: true,
-        minimumNoticeMinutes: true,
-        maximumAdvanceDays: true,
-        active: true,
-      },
-    });
+  const portfolioTimezone = portfolio.timezone;
+
+  const consultationType = await db.consultationType.findFirst({
+    where: {
+      id: consultationTypeId,
+      portfolioId,
+    },
+    select: {
+      durationMinutes: true,
+      bufferBeforeMinutes: true,
+      bufferAfterMinutes: true,
+      minimumNoticeMinutes: true,
+      maximumAdvanceDays: true,
+      active: true,
+    },
+  });
 
   if (!consultationType) {
-    throw new Error(
-      "Consultation type not found.",
-    );
+    throw new Error("Consultation type not found.");
   }
 
   if (!consultationType.active) {
@@ -508,197 +428,249 @@ export async function getAvailabilitySlots({
 
   const now = new Date();
 
-  const minimumBookingTime =
-    new Date(
-      now.getTime() +
-        consultationType.minimumNoticeMinutes *
-          60000,
-    );
+  const minimumBookingTime = new Date(
+    now.getTime() +
+      consultationType.minimumNoticeMinutes * 60000,
+  );
 
-  const maximumBookingTime =
-    new Date(
-      now.getTime() +
-        consultationType.maximumAdvanceDays *
-          24 *
-          60 *
-          60000,
-    );
+  const maximumBookingTime = new Date(
+    now.getTime() +
+      consultationType.maximumAdvanceDays * 24 * 60 * 60000,
+  );
 
   const requestedStart =
-    startDate.getTime() <
-    minimumBookingTime.getTime()
+    startDate.getTime() < minimumBookingTime.getTime()
       ? minimumBookingTime
       : startDate;
 
   const requestedEnd =
-    endDate.getTime() >
-    maximumBookingTime.getTime()
+    endDate.getTime() > maximumBookingTime.getTime()
       ? maximumBookingTime
       : endDate;
 
-  if (
-    requestedStart.getTime() >=
-    requestedEnd.getTime()
-  ) {
+  if (requestedStart.getTime() >= requestedEnd.getTime()) {
     return [];
   }
 
-  const rules =
-    await prisma.availabilityRule.findMany({
-      where: {
-        portfolioId,
-        enabled: true,
-      },
-      select: {
-        dayOfWeek: true,
-        startTime: true,
-        endTime: true,
-        timezone: true,
-        enabled: true,
-      },
-      orderBy: [
-        {
-          dayOfWeek: "asc",
-        },
-        {
-          startTime: "asc",
-        },
-      ],
-    });
+  const firstLocalDate = getLocalDateKey(
+    requestedStart,
+    portfolioTimezone,
+  );
 
-  const exceptions =
-    await prisma.availabilityException.findMany({
-      where: {
-        portfolioId,
-        date: {
-          gte: startOfUtcDay(
-            requestedStart,
-          ),
-          lte: startOfUtcDay(
-            requestedEnd,
-          ),
-        },
-      },
-      select: {
-        date: true,
-        type: true,
-        startTime: true,
-        endTime: true,
-      },
-      orderBy: {
-        date: "asc",
-      },
-    });
+  const lastLocalDate = getLocalDateKey(
+    requestedEnd,
+    portfolioTimezone,
+  );
 
-  const consultations =
-    await prisma.consultation.findMany({
-      where: {
-        portfolioId,
-        scheduledAt: {
-          lt: requestedEnd,
-          gte: new Date(
-            requestedStart.getTime() -
-              24 * 60 * 60000,
-          ),
-        },
-        status: {
-          in: [
-            "PENDING",
-            "CONFIRMED",
-          ],
+  const firstDate = new Date(
+    `${firstLocalDate}T00:00:00.000Z`,
+  );
+
+  const lastDate = new Date(
+    `${lastLocalDate}T00:00:00.000Z`,
+  );
+
+  const rules = await db.availabilityRule.findMany({
+    where: {
+      portfolioId,
+      enabled: true,
+    },
+    select: {
+      dayOfWeek: true,
+      startTime: true,
+      endTime: true,
+      enabled: true,
+    },
+    orderBy: [
+      { dayOfWeek: "asc" },
+      { startTime: "asc" },
+    ],
+  });
+
+  const exceptions = await db.availabilityException.findMany({
+    where: {
+      portfolioId,
+      date: {
+        gte: firstDate,
+        lte: lastDate,
+      },
+    },
+    select: {
+      date: true,
+      type: true,
+      startTime: true,
+      endTime: true,
+    },
+    orderBy: {
+      date: "asc",
+    },
+  });
+
+  // Determine the maximum existing appointment occupancy.
+  // Existing appointments can overlap the requested range because
+  // of their duration, after-buffer, or the candidate's before-buffer.
+  const consultationTypes = await db.consultationType.findMany({
+    where: {
+      portfolioId,
+    },
+    select: {
+      durationMinutes: true,
+      bufferBeforeMinutes: true,
+      bufferAfterMinutes: true,
+    },
+  });
+
+  const maximumExistingOccupancyMinutes = consultationTypes.reduce(
+    (maximum, type) =>
+      Math.max(
+        maximum,
+        type.durationMinutes + type.bufferAfterMinutes,
+      ),
+    0,
+  );
+
+  const maximumExistingBufferBeforeMinutes =
+    consultationTypes.reduce(
+      (maximum, type) =>
+        Math.max(maximum, type.bufferBeforeMinutes),
+      0,
+    );
+
+  const consultationLookbackMinutes =
+    consultationType.bufferBeforeMinutes +
+    maximumExistingOccupancyMinutes;
+
+  const consultationLookbackStart = new Date(
+    requestedStart.getTime() -
+      consultationLookbackMinutes * 60000,
+  );
+
+  // Include future appointments whose before-buffer may overlap
+  // the candidate's after-buffer, even when they start after requestedEnd.
+  const consultationLookaheadEnd = new Date(
+    requestedEnd.getTime() +
+      (
+        consultationType.bufferAfterMinutes +
+        maximumExistingBufferBeforeMinutes
+      ) * 60000,
+  );
+
+  const consultations = await db.consultation.findMany({
+    where: {
+      portfolioId,
+      scheduledAt: {
+        lt: consultationLookaheadEnd,
+        gte: consultationLookbackStart,
+      },
+      status: {
+        in: ["PENDING", "CONFIRMED"],
+      },
+    },
+    select: {
+      scheduledAt: true,
+      durationMinutes: true,
+      consultationType: {
+        select: {
+          bufferBeforeMinutes: true,
+          bufferAfterMinutes: true,
         },
       },
-      select: {
-        scheduledAt: true,
-        durationMinutes: true,
-        consultationType: {
-          select: {
-            bufferBeforeMinutes: true,
-            bufferAfterMinutes: true,
-          },
-        },
-      },
-    });
+    },
+  });
 
   const allSlots: AvailabilitySlot[] = [];
 
-  let currentDate =
-    startOfUtcDay(
-      requestedStart,
-    );
+  let calendarDate = new Date(
+    `${firstLocalDate}T12:00:00.000Z`,
+  );
 
-  const finalDate =
-    startOfUtcDay(
-      requestedEnd,
-    );
+  const finalCalendarDate = new Date(
+    `${lastLocalDate}T12:00:00.000Z`,
+  );
 
   while (
-    currentDate.getTime() <=
-    finalDate.getTime()
+    calendarDate.getTime() <= finalCalendarDate.getTime()
   ) {
-    for (const rule of rules) {
-      const periods =
-        getEffectivePeriods(
-          currentDate,
-          rule,
-          exceptions,
-        );
+    const year = calendarDate.getUTCFullYear();
+    const month = calendarDate.getUTCMonth() + 1;
+    const day = calendarDate.getUTCDate();
 
-      for (const period of periods) {
-        const candidateSlots =
-          buildCandidateSlots(
-            currentDate,
-            period,
-            consultationType,
-          );
+    const localNoon = zonedDateTimeToUtc(
+      year,
+      month,
+      day,
+      12,
+      0,
+      portfolioTimezone,
+    );
 
-        for (const slot of candidateSlots) {
-          if (
-            !isInsideRange(
-              slot.start,
-              slot.end,
-              requestedStart,
-              requestedEnd,
-            )
-          ) {
-            continue;
-          }
+    const periods = getEffectivePeriods(
+      localNoon,
+      rules,
+      exceptions,
+      portfolioTimezone,
+    );
 
-          if (
-            slot.start.getTime() <
-            minimumBookingTime.getTime()
-          ) {
-            continue;
-          }
+    for (const period of periods) {
+      const candidateSlots = buildCandidateSlots(
+        localNoon,
+        period,
+        consultationType,
+      );
 
-          if (
-            slot.end.getTime() >
-            maximumBookingTime.getTime()
-          ) {
-            continue;
-          }
-
-          allSlots.push(slot);
+      for (const slot of candidateSlots) {
+        if (
+          !isInsideRange(
+            slot.start,
+            slot.end,
+            requestedStart,
+            requestedEnd,
+          )
+        ) {
+          continue;
         }
+
+        if (
+          slot.start.getTime() <
+          minimumBookingTime.getTime()
+        ) {
+          continue;
+        }
+
+        if (
+          slot.end.getTime() >
+          maximumBookingTime.getTime()
+        ) {
+          continue;
+        }
+
+        allSlots.push(slot);
       }
     }
 
-    currentDate =
-      addUtcDays(
-        currentDate,
-        1,
-      );
+    calendarDate = addUtcDays(calendarDate, 1);
   }
 
-  const availableSlots =
-    removeOverlappingSlots(
-      allSlots,
-      consultations,
-    );
+  const availableSlots = removeOverlappingSlots(
+    allSlots,
+    consultations,
+    consultationType.bufferBeforeMinutes,
+    consultationType.bufferAfterMinutes,
+  );
 
-  return availableSlots.sort(
-    (a, b) =>
-      a.start.getTime() -
-      b.start.getTime(),
+  // Overlapping weekly rules can generate identical slots.
+  // Deduplicate by their actual UTC start and end instants.
+  const uniqueSlots = new Map<string, AvailabilitySlot>();
+
+  for (const slot of availableSlots) {
+    const key = `${slot.start.getTime()}:${slot.end.getTime()}`;
+
+    if (!uniqueSlots.has(key)) {
+      uniqueSlots.set(key, slot);
+    }
+  }
+
+  return Array.from(uniqueSlots.values()).sort(
+    (a, b) => a.start.getTime() - b.start.getTime(),
   );
 }

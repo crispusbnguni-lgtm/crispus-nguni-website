@@ -1,23 +1,19 @@
 
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { requireApiPermission, requireSameOriginApiRequest } from "@/lib/authorization";
+import { resolveAdminAuditActor, writeAdminAudit } from "@/lib/admin-audit";
+import {
+  isBackgroundWriteConflict,
+  lockBackgroundOptionWrites,
+} from "@/lib/background-governance";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-async function isSuperAdmin() {
-  const user = await getCurrentUser();
-  return user?.role === "SUPER_ADMIN";
-}
-
 export async function GET() {
   try {
-    if (!(await isSuperAdmin())) {
-      return NextResponse.json(
-        { success: false, message: "Unauthorized." },
-        { status: 403 }
-      );
-    }
+    const authorization = await requireApiPermission("CONTENT_MODERATE");
+    if (authorization.response) return authorization.response;
 
     const backgrounds = await prisma.backgroundOption.findMany({
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
@@ -39,12 +35,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    if (!(await isSuperAdmin())) {
-      return NextResponse.json(
-        { success: false, message: "Unauthorized." },
-        { status: 403 }
-      );
-    }
+    const authorization = await requireApiPermission("CONTENT_MODERATE");
+    if (authorization.response) return authorization.response;
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
 
     const body = await request.json();
 
@@ -109,7 +103,10 @@ export async function POST(request: Request) {
       }
     }
 
+    const actor = await resolveAdminAuditActor();
     const background = await prisma.$transaction(async (tx) => {
+      await lockBackgroundOptionWrites(tx);
+
       if (isDefault) {
         await tx.backgroundOption.updateMany({
           where: { isDefault: true },
@@ -117,7 +114,7 @@ export async function POST(request: Request) {
         });
       }
 
-      return tx.backgroundOption.create({
+      const created = await tx.backgroundOption.create({
         data: {
           name,
           type,
@@ -127,6 +124,30 @@ export async function POST(request: Request) {
           isDefault,
         },
       });
+
+      await writeAdminAudit(
+        actor,
+        {
+          action: "ADMIN_BACKGROUND_CREATED",
+          targetType: "BackgroundOption",
+          targetId: created.id,
+          metadata: {
+            changedFields: [
+              "name",
+              "type",
+              "value",
+              "description",
+              "enabled",
+              "isDefault",
+            ],
+          },
+          reason: "ADMIN_REQUEST",
+          outcome: "SUCCEEDED",
+        },
+        tx,
+      );
+
+      return created;
     });
 
     return NextResponse.json(
@@ -134,6 +155,13 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
+    if (isBackgroundWriteConflict(error)) {
+      return NextResponse.json(
+        { success: false, message: "Background library changed concurrently. Refresh and try again." },
+        { status: 409 },
+      );
+    }
+
     console.error("Create background error:", error);
 
     return NextResponse.json(

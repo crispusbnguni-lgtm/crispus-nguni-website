@@ -77,7 +77,6 @@ const STATUS_OPTIONS: ConsultationStatus[] = [
   "COMPLETED",
   "CANCELLED",
   "NO_SHOW",
-  "RESCHEDULED",
 ];
 
 const STATUS_STYLES: Record<ConsultationStatus, string> = {
@@ -705,7 +704,12 @@ export default function ConsultationsPage() {
                             }
                             className="max-w-full rounded-xl border border-white/15 bg-black/25 px-3 py-2.5 text-xs text-white outline-none transition focus:border-[#D9A441]/60 disabled:opacity-50"
                           >
-                            {STATUS_OPTIONS.map((status) => (
+                            {[
+                              ...STATUS_OPTIONS,
+                              ...(consultation.status === "RESCHEDULED"
+                                ? ["RESCHEDULED" as const]
+                                : []),
+                            ].map((status) => (
                               <option
                                 className="bg-[#111319]"
                                 key={status}

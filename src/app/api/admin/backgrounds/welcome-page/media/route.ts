@@ -1,7 +1,16 @@
-import { randomUUID } from "node:crypto";
+
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { requireSuperAdmin } from "@/lib/authorization";
+import {
+  requireApiPermission,
+  requireSameOriginApiRequest,
+} from "@/lib/authorization";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { hasAllowedBackgroundMediaSignature } from "@/lib/background-media";
+import { reportOperationalFailure } from "@/lib/observability";
+import { prisma } from "@/lib/prisma";
+import { lockBackgroundOptionWrites } from "@/lib/background-governance";
+import { resolveAdminAuditActor, writeAdminAudit } from "@/lib/admin-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,9 +28,37 @@ const ALLOWED_TYPES: Record<string, string> = {
   "video/webm": "webm",
 };
 
+const ALLOWED_MEDIA_PATH =
+  /^(images|videos)\/[A-Za-z0-9-]+\.(jpg|png|webp|avif|gif|mp4|webm)$/;
+
+function containsExactUrl(value: unknown, targetUrl: string): boolean {
+  if (value === targetUrl) return true;
+
+  if (Array.isArray(value)) {
+    return value.some((item) => containsExactUrl(item, targetUrl));
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(
+      (item) => containsExactUrl(item, targetUrl),
+    );
+  }
+
+  return false;
+}
+
+function createMediaAuditId(path: string): string {
+  const hash = createHash("sha256").update(path).digest("hex");
+  return `media_${hash}`;
+}
+
 export async function POST(request: Request) {
   try {
-    await requireSuperAdmin();
+    const authorization = await requireApiPermission("CMS_MANAGE");
+    if (authorization.response) return authorization.response;
+
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
 
     const formData = await request.formData();
     const file = formData.get("file");
@@ -50,9 +87,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const extension = ALLOWED_TYPES[file.type];
+    const allowedExtension = ALLOWED_TYPES[file.type];
 
-    if (!extension) {
+    if (!allowedExtension) {
       return NextResponse.json(
         {
           success: false,
@@ -63,22 +100,42 @@ export async function POST(request: Request) {
       );
     }
 
-    const kind = file.type.startsWith("video/")
-      ? "videos"
-      : "images";
+    if (
+      !(await hasAllowedBackgroundMediaSignature(
+        file,
+        Object.keys(ALLOWED_TYPES),
+      ))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "The selected file contents do not match a supported media type.",
+        },
+        { status: 415 },
+      );
+    }
+
+    const extension = allowedExtension;
+    const contentType = file.type;
+    const isVideo = file.type.startsWith("video/");
+    const kind = isVideo ? "videos" : "images";
+    const assetType = isVideo ? "video" : "image";
 
     const path = `${kind}/${Date.now()}-${randomUUID()}.${extension}`;
 
     const { error } = await supabaseAdmin.storage
       .from(BUCKET)
       .upload(path, file, {
-        contentType: file.type,
+        contentType,
         cacheControl: "31536000",
         upsert: false,
       });
 
     if (error) {
-      console.error("Supabase media upload failed:", error.message);
+      reportOperationalFailure("ADMIN_STORAGE_OPERATION_FAILED", {
+        cause: error,
+      });
 
       return NextResponse.json(
         {
@@ -100,12 +157,12 @@ export async function POST(request: Request) {
         path,
         url: data.publicUrl,
         name: file.name,
-        type: file.type,
+        type: assetType,
         size: file.size,
       },
     });
-  } catch (error) {
-    console.error("Welcome page media upload failed:", error);
+  } catch (cause) {
+    reportOperationalFailure("ADMIN_STORAGE_OPERATION_FAILED", { cause });
 
     return NextResponse.json(
       {
@@ -116,9 +173,11 @@ export async function POST(request: Request) {
     );
   }
 }
+
 export async function GET() {
   try {
-    await requireSuperAdmin();
+    const authorization = await requireApiPermission("CMS_MANAGE");
+    if (authorization.response) return authorization.response;
 
     const folders = ["images", "videos"] as const;
 
@@ -140,6 +199,7 @@ export async function GET() {
           .filter((item) => item.id !== null)
           .map((item) => {
             const path = `${folder}/${item.name}`;
+
             const { data: publicData } = supabaseAdmin.storage
               .from(BUCKET)
               .getPublicUrl(path);
@@ -168,8 +228,8 @@ export async function GET() {
         );
       }),
     });
-  } catch (error) {
-    console.error("Unable to list welcome page media:", error);
+  } catch (cause) {
+    reportOperationalFailure("ADMIN_STORAGE_OPERATION_FAILED", { cause });
 
     return NextResponse.json(
       {
@@ -182,8 +242,14 @@ export async function GET() {
 }
 
 export async function DELETE(request: Request) {
+  let storageDeletionCompleted = false;
+
   try {
-    await requireSuperAdmin();
+    const authorization = await requireApiPermission("CMS_MANAGE");
+    if (authorization.response) return authorization.response;
+
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
 
     const body: unknown = await request.json();
 
@@ -201,28 +267,109 @@ export async function DELETE(request: Request) {
 
     const path = body.path;
 
-    // Only permit files in the folders created by our upload endpoint.
-    const isAllowedPath =
-      /^(images|videos)\/[a-zA-Z0-9-]+\.(jpg|png|webp|avif|gif|mp4|webm)$/.test(
-        path,
-      );
-
-    if (!isAllowedPath) {
+    if (!ALLOWED_MEDIA_PATH.test(path)) {
       return NextResponse.json(
         { success: false, message: "Invalid media path." },
         { status: 400 },
       );
     }
 
-    const { error } = await supabaseAdmin.storage
-      .from(BUCKET)
-      .remove([path]);
+    const actor = await resolveAdminAuditActor();
 
-    if (error) {
-      console.error("Supabase media deletion failed:", error.message);
+    const deletion = await prisma.$transaction(async (tx) => {
+      await lockBackgroundOptionWrites(tx);
+
+      const { data: publicData } = supabaseAdmin.storage
+        .from(BUCKET)
+        .getPublicUrl(path);
+
+      const settings = await tx.welcomePageSettings.findUnique({
+        where: { key: "main" },
+        select: { content: true },
+      });
+
+      if (
+        settings &&
+        containsExactUrl(settings.content, publicData.publicUrl)
+      ) {
+        return { kind: "welcome-page-reference" as const };
+      }
+
+      const backgroundReference = await tx.backgroundOption.findFirst({
+        where: { value: publicData.publicUrl },
+        select: { id: true, name: true },
+      });
+
+      if (backgroundReference) {
+        return {
+          kind: "background-library-reference" as const,
+          name: backgroundReference.name,
+        };
+      }
+
+      const { error } = await supabaseAdmin.storage
+        .from(BUCKET)
+        .remove([path]);
+
+      if (error) {
+        return { kind: "storage-error" as const, error };
+      }
+
+      storageDeletionCompleted = true;
+
+      const mediaAuditId = createMediaAuditId(path);
+
+      await writeAdminAudit(
+        actor,
+        {
+          action: "ADMIN_BACKGROUND_MEDIA_DELETED",
+          targetType: "MediaAsset",
+          targetId: mediaAuditId,
+          metadata: {
+            changedFields: ["media_deleted"],
+            storagePath: path,
+          },
+          reason: "ADMIN_REQUEST",
+          outcome: "SUCCEEDED",
+        },
+        tx,
+      );
+
+      return { kind: "deleted" as const };
+    });
+
+    if (deletion.kind === "welcome-page-reference") {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "This media is still referenced by Welcome Page content or its saved history. Update those references before deleting it.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (deletion.kind === "background-library-reference") {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            `This media is still used by the Background Library option "${deletion.name}". Update or remove that option before deleting the file.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    if (deletion.kind === "storage-error") {
+      reportOperationalFailure("ADMIN_STORAGE_OPERATION_FAILED", {
+        cause: deletion.error,
+      });
 
       return NextResponse.json(
-        { success: false, message: "Unable to delete this file." },
+        {
+          success: false,
+          message: "Unable to delete this file from storage.",
+        },
         { status: 502 },
       );
     }
@@ -232,8 +379,19 @@ export async function DELETE(request: Request) {
       message: "Media deleted successfully.",
       path,
     });
-  } catch (error) {
-    console.error("Welcome page media deletion failed:", error);
+  } catch (cause) {
+    reportOperationalFailure("ADMIN_STORAGE_OPERATION_FAILED", { cause });
+
+    if (storageDeletionCompleted) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "The file was removed from storage, but its audit record could not be confirmed. Refresh the Media Library and check the audit log before retrying.",
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json(
       {

@@ -5,7 +5,7 @@ import type {
   ButtonHTMLAttributes,
   ReactNode,
 } from "react";
-import { Glass } from "@samasante/liquid-glass";
+import { LensGlass } from "@/components/ui/LensGlass";
 
 type LiquidLensButtonProps = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
@@ -22,8 +22,9 @@ export function LiquidLensButton({
   ...buttonProps
 }: LiquidLensButtonProps) {
   return (
-    <Glass
+    <LensGlass
       className="crispus-live-liquid-lens"
+      radius={999}
       style={{
         display: "inline-flex",
         position: "relative",
@@ -34,29 +35,6 @@ export function LiquidLensButton({
         boxShadow:
           "inset 0 1px 0 rgba(255,255,255,0.65), 0 8px 24px rgba(0,0,0,0.12)",
       }}
-      
-optics={{
-  strength: 0.14,
-  depth: 0.95,
-  curvature: 0.5,
-  dispersion: 0.12,
-
-  bend: 0.4,
-  bendWidth: 0.07,
-
-  specular: 1.2,
-  sheen: 0.9,
-  sheenWidth: 2.5,
-  sheenFalloff: 1.5,
-  sheenAngle: 45,
-
-  frost: 0,
-  brightness: 0,
-
-  glow: 0.1,
-  glowSpread: 1,
-  glowFalloff: 0.8,
-}}
     >
       <button
         {...buttonProps}
@@ -84,6 +62,6 @@ optics={{
       >
         {children}
       </button>
-    </Glass>
+    </LensGlass>
   );
 }

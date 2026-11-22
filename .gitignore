@@ -55,3 +55,22 @@ next-env.d.ts
 
 # Local build and TypeScript cache
 *.tsbuildinfo
+# Temporary backups and review archives
+*.backup
+*.backup-*
+*.bak
+*.bak-*
+*.pre-*-backup
+*.before-*-backup
+/.phase1-auth-backup-*/
+/.security-upgrade-backup-*/
+/prisma/migration-archives/
+*.zip
+/batch6-source-structured/
+auth-database-inspection.sql
+
+# Additional temporary backup naming conventions
+*backup*
+*.bak*
+*.before-*
+*.pre-*

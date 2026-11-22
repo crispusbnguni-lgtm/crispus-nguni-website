@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { draftMode } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { requireSuperAdmin } from "@/lib/authorization";
+import { requireApiPermission } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +17,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function GET(request: Request) {
   try {
-    await requireSuperAdmin();
+    const authorization = await requireApiPermission("CMS_MANAGE");
+    if (authorization.response) return authorization.response;
 
     const settings = await prisma.welcomePageSettings.findUnique({
       where: { key: "main" },

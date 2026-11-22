@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import type { Metadata } from "next";
 import { ConsultationForm } from "@/components/consultation/ConsultationForm";
 
 type ConsultationPageProps = {
@@ -9,6 +10,46 @@ type ConsultationPageProps = {
   }>;
 };
 
+export async function generateMetadata({
+  searchParams,
+}: ConsultationPageProps): Promise<Metadata> {
+  const { portfolioSlug } = await searchParams;
+
+  if (!portfolioSlug) {
+    return {
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  const portfolio = await prisma.portfolioSite.findUnique({
+    where: {
+      slug: portfolioSlug,
+    },
+    select: {
+      published: true,
+      visibility: true,
+    },
+  });
+
+  const isIndexable = Boolean(
+    portfolio?.published &&
+      portfolio.visibility === "PUBLIC"
+  );
+
+  return {
+    robots: {
+      index: isIndexable,
+      follow: isIndexable,
+      googleBot: {
+        index: isIndexable,
+        follow: isIndexable,
+      },
+    },
+  };
+}
 const consultationTypes = [
   {
     title: "Financial Education",

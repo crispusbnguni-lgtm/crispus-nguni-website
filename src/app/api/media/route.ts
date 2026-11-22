@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 
 const BUCKET_NAME = "portfolio-media";
 
@@ -211,9 +211,9 @@ export async function POST(request: Request) {
         await file.arrayBuffer()
       );
 
-    const {
-      error: uploadError,
-    } = await supabase.storage
+   const {
+  error: uploadError,
+} = await supabaseAdmin.storage
       .from(BUCKET_NAME)
       .upload(
         storagePath,

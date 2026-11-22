@@ -1,4 +1,4 @@
-import Image from "next/image";
+import { PortfolioImage } from "@/components/portfolio/PortfolioImage";
 
 type HeroSectionProps = {
   name: string;
@@ -15,7 +15,13 @@ export function HeroSection({
   profileImage,
   location,
 }: HeroSectionProps) {
-  const imageSource = profileImage || "/ ngunijpg";
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
 
   return (
     <section className="relative overflow-hidden px-6 pb-24 pt-32 sm:pb-32 sm:pt-40">
@@ -69,12 +75,17 @@ export function HeroSection({
           <div className="absolute -inset-6 rounded-[44px] bg-gradient-to-br from-[#126BFF]/25 via-[#722BFF]/10 to-[#D9A441]/15 blur-3xl" />
 
           <div className="relative aspect-[4/5] overflow-hidden rounded-[36px] border border-white/10 bg-[#071A46] shadow-2xl">
-            <Image
-              src={imageSource}
+            <PortfolioImage
+              src={profileImage}
               alt={name}
-              fill
               priority
               className="object-cover"
+              sizes="(max-width: 1024px) 100vw, 40vw"
+              fallback={(
+                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#10214a] via-[#162441] to-[#071A46] text-6xl font-semibold tracking-widest text-white/75" aria-hidden="true">
+                  {initials || "•"}
+                </div>
+              )}
             />
 
             <div className="absolute inset-0 bg-gradient-to-t from-[#05070D]/80 via-transparent to-transparent" />

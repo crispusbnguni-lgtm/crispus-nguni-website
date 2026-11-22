@@ -1,30 +1,15 @@
 
-import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { NextResponse, type NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireApiPermission, requireSameOriginApiRequest } from "@/lib/authorization";
+import { resolveAdminAuditActor, writeAdminAudit } from "@/lib/admin-audit";
+import { DEFAULT_DISPLAY_STUDIO_PREFERENCES } from "@/lib/display-studio-preferences";
+import { reportOperationalFailure } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_PREFERENCES = {
-  textScale: 1,
-  readingWidth: "normal",
-  fontFamily: "one-ui",
-  glassLevel: 0.72,
-  frostLevel: 0,
-  transparency: 0.72,
-  reflectionLevel: 0.65,
-  glassDepth: 0.65,
-  appearancePreset: "crispus",
-  lineHeight: "normal",
-  letterSpacing: "normal",
-  colorMode: "dark",
-  highContrast: false,
-  reduceMotion: false,
-  reduceTransparency: false,
-  underlineLinks: false,
-  focusMode: false,
-};
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 function validatePreferences(
   value: unknown
@@ -85,7 +70,7 @@ function validatePreferences(
   // Keep only recognized preference keys and JSON-compatible values.
   const preferences: Record<string, Prisma.InputJsonValue> = {};
 
-  for (const key of Object.keys(DEFAULT_PREFERENCES)) {
+  for (const key of Object.keys(DEFAULT_DISPLAY_STUDIO_PREFERENCES)) {
     const preferenceValue = input[key];
 
     if (
@@ -104,40 +89,33 @@ function validatePreferences(
 
 export async function GET() {
   try {
+    const authorization = await requireApiPermission("SYSTEM_CONFIGURE");
+    if (authorization.response) return authorization.response;
+
     const settings = await prisma.displayStudioSettings.findUnique({
       where: { id: "main" },
     });
 
-    return NextResponse.json({
-      preferences: settings?.preferences ?? DEFAULT_PREFERENCES,
-    });
-  } catch (error) {
-    console.error("Failed to load Display Studio defaults:", error);
+    return NextResponse.json(
+      { preferences: settings?.preferences ?? DEFAULT_DISPLAY_STUDIO_PREFERENCES },
+      { headers: NO_STORE_HEADERS },
+    );
+  } catch (cause) {
+    reportOperationalFailure("DISPLAY_STUDIO_ADMIN_READ_FAILED", { cause });
 
     return NextResponse.json(
       { error: "Unable to load display settings." },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Authentication required." },
-        { status: 401 }
-      );
-    }
-
-    if (user.role !== "SUPER_ADMIN") {
-      return NextResponse.json(
-        { error: "Super Admin access required." },
-        { status: 403 }
-      );
-    }
+    const authorization = await requireApiPermission("SYSTEM_CONFIGURE");
+    if (authorization.response) return authorization.response;
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
 
     const body: unknown = await request.json();
 
@@ -152,31 +130,57 @@ export async function PUT(request: NextRequest) {
     if (!preferences) {
       return NextResponse.json(
         { error: "Invalid display preferences." },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
-    const settings = await prisma.displayStudioSettings.upsert({
-      where: { id: "main" },
-      create: {
-        id: "main",
-        preferences,
-      },
-      update: {
-        preferences,
-      },
+    const actor = await resolveAdminAuditActor();
+    const settings = await prisma.$transaction(async (tx) => {
+      const existing = await tx.displayStudioSettings.findUnique({
+        where: { id: "main" },
+        select: { preferences: true },
+      });
+      const settings = await tx.displayStudioSettings.upsert({
+        where: { id: "main" },
+        create: {
+          id: "main",
+          preferences,
+        },
+        update: {
+          preferences,
+        },
+      });
+
+      const previousPreferences =
+        existing?.preferences && typeof existing.preferences === "object" && !Array.isArray(existing.preferences)
+          ? existing.preferences as Record<string, unknown>
+          : {};
+      const changedFields = Object.keys(DEFAULT_DISPLAY_STUDIO_PREFERENCES).filter(
+        (key) => JSON.stringify(previousPreferences[key]) !== JSON.stringify(preferences[key]),
+      );
+
+      await writeAdminAudit(actor, {
+        action: "ADMIN_DISPLAY_STUDIO_UPDATED",
+        targetType: "DisplayStudioSettings",
+        targetId: settings.id,
+        metadata: { changedFields },
+        reason: "ADMIN_REQUEST",
+        outcome: "SUCCEEDED",
+      }, tx);
+
+      return settings;
     });
 
-    return NextResponse.json({
-      success: true,
-      preferences: settings.preferences,
-    });
-  } catch (error) {
-    console.error("Failed to save Display Studio defaults:", error);
+    return NextResponse.json(
+      { success: true, preferences: settings.preferences },
+      { headers: NO_STORE_HEADERS },
+    );
+  } catch (cause) {
+    reportOperationalFailure("DISPLAY_STUDIO_ADMIN_WRITE_FAILED", { cause });
 
     return NextResponse.json(
       { error: "Unable to save display settings. Check administrator access." },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }

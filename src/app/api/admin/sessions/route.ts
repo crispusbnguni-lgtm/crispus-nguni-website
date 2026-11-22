@@ -1,30 +1,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { requireApiPermission, requireSameOriginApiRequest } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-async function getAdmin() {
-  const user = await getCurrentUser();
-
-  if (!user || user.role !== "SUPER_ADMIN") {
-    return null;
-  }
-
-  return user;
-}
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export async function GET() {
   try {
-    const admin = await getAdmin();
-
-    if (!admin) {
-      return NextResponse.json(
-        { success: false, message: "Super Admin access required." },
-        { status: 403 }
-      );
-    }
+    const authorization = await requireApiPermission("SESSION_VIEW");
+    if (authorization.response) return authorization.response;
 
     const sessions = await prisma.userSession.findMany({
       where: {
@@ -52,27 +39,23 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       sessions,
-    });
+    }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Admin session list error:", error);
 
     return NextResponse.json(
       { success: false, message: "Unable to load user sessions." },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const admin = await getAdmin();
-
-    if (!admin) {
-      return NextResponse.json(
-        { success: false, message: "Super Admin access required." },
-        { status: 403 }
-      );
-    }
+    const authorization = await requireApiPermission("SESSION_REVOKE");
+    if (authorization.response) return authorization.response;
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
 
     const body: unknown = await request.json().catch(() => null);
 
@@ -127,7 +110,7 @@ export async function DELETE(request: NextRequest) {
 
       await tx.auditLog.create({
         data: {
-          actorUserId: admin.id,
+          actorUserId: authorization.user.id,
           action: "ADMIN_SESSION_REVOKED",
           targetType: "UserSession",
           targetId: session.id,
@@ -147,20 +130,20 @@ export async function DELETE(request: NextRequest) {
           success: false,
           message: "Session not found, expired, or already revoked.",
         },
-        { status: 404 }
+        { status: 404, headers: NO_STORE_HEADERS }
       );
     }
 
     return NextResponse.json({
       success: true,
       message: "The selected user's session has been forcibly logged out.",
-    });
+    }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Admin force logout error:", error);
 
     return NextResponse.json(
       { success: false, message: "Unable to revoke this session." },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }

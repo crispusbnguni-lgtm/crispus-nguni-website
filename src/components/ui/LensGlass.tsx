@@ -4,6 +4,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Glass, type GlassOptics } from "@samasante/liquid-glass";
 import { useReader } from "@/components/ui/ReaderProvider";
+import type { WelcomePageGlassSettings } from "@/lib/welcome-page";
 
 type LensGlassProps = {
   children: ReactNode;
@@ -11,6 +12,7 @@ type LensGlassProps = {
   style?: CSSProperties;
   radius?: number | string;
   optics?: Partial<GlassOptics>;
+  glassConfig?: WelcomePageGlassSettings;
 };
 
 export const LENS_OPTICS: GlassOptics = {
@@ -50,14 +52,19 @@ export function LensGlass({
   style,
   radius = 24,
   optics,
+  glassConfig,
 }: LensGlassProps) {
-  const { preferences } = useReader();
+  const { preferences, globalDefaultsConfigured, overriddenPreferenceKeys } = useReader();
+  const hasReaderSetting = (key: keyof typeof preferences) =>
+    globalDefaultsConfigured || overriddenPreferenceKeys.includes(key);
 
-  const strengthLevel = clamp(preferences.glassLevel);
-  const frostLevel = clamp(preferences.frostLevel);
-  const transparencyLevel = clamp(preferences.transparency);
-  const reflectionLevel = clamp(preferences.reflectionLevel);
-  const depthLevel = clamp(preferences.glassDepth);
+  // Preserve the legacy Welcome Page per-page glass values until global Display
+  // Studio defaults exist; explicit reader overrides always take precedence.
+  const strengthLevel = clamp(hasReaderSetting("glassLevel") ? preferences.glassLevel : glassConfig?.strength ?? preferences.glassLevel);
+  const frostLevel = clamp(hasReaderSetting("frostLevel") ? preferences.frostLevel : glassConfig?.frost ?? preferences.frostLevel);
+  const transparencyLevel = clamp(hasReaderSetting("transparency") ? preferences.transparency : glassConfig?.transparency ?? preferences.transparency);
+  const reflectionLevel = clamp(hasReaderSetting("reflectionLevel") ? preferences.reflectionLevel : glassConfig?.reflection ?? preferences.reflectionLevel);
+  const depthLevel = clamp(hasReaderSetting("glassDepth") ? preferences.glassDepth : glassConfig?.depth ?? preferences.glassDepth);
 
   const dynamicOptics: Partial<GlassOptics> = {
     ...LENS_OPTICS,
@@ -94,20 +101,35 @@ export function LensGlass({
   const highlightOpacity = 0.06 + reflectionLevel * 0.24;
   const shadowOpacity = 0.04 + depthLevel * 0.12;
 
+  const surfaceStyle: CSSProperties = {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: radius,
+    background: `rgba(255,255,255,${tintOpacity})`,
+    border: `1px solid rgba(255,255,255,${edgeOpacity})`,
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,${highlightOpacity}), 0 12px 36px rgba(0,0,0,${shadowOpacity})`,
+    ...style,
+  };
+
+  const readerGlassOverride = globalDefaultsConfigured ||
+    overriddenPreferenceKeys.some((key) => [
+      "glassLevel", "frostLevel", "transparency", "reflectionLevel", "glassDepth",
+    ].includes(key));
+
+  if (glassConfig?.enabled === false && !readerGlassOverride) {
+    return (
+      <div className={className} style={surfaceStyle}>
+        {children}
+      </div>
+    );
+  }
+
   return (
     <Glass
       className={className}
       optics={dynamicOptics}
       radius={typeof radius === "number" ? radius : undefined}
-      style={{
-        position: "relative",
-        overflow: "hidden",
-        borderRadius: radius,
-        background: `rgba(255,255,255,${tintOpacity})`,
-        border: `1px solid rgba(255,255,255,${edgeOpacity})`,
-        boxShadow: `inset 0 1px 0 rgba(255,255,255,${highlightOpacity}), 0 12px 36px rgba(0,0,0,${shadowOpacity})`,
-        ...style,
-      }}
+      style={surfaceStyle}
     >
       {children}
     </Glass>

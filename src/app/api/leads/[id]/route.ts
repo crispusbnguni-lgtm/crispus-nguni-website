@@ -7,6 +7,15 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import {
+  findLeadContactDuplicates,
+  lockLeadContacts,
+  normalizeLeadEmail,
+  normalizeLeadPhone,
+  recalculateLeadScore,
+} from "@/lib/lead-crm";
+import { leadPortfolioScope } from "@/lib/lead-access";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -49,20 +58,6 @@ function isValidDate(value: unknown): value is string {
   );
 }
 
-function accessFilter(user: { id: string; role: string }) {
-  if (user.role === "SUPER_ADMIN") {
-    return {};
-  }
-
-  return {
-    portfolio: {
-      is: {
-        userId: user.id,
-      },
-    },
-  };
-}
-
 async function parseBody(request: Request) {
   try {
     const body: unknown = await request.json();
@@ -96,10 +91,31 @@ export async function GET(
 
     const { id } = await params;
 
+    const access = leadPortfolioScope(user);
+    const scoreState = await prisma.lead.findFirst({
+      where: { id, ...access },
+      select: { id: true, scoreCalculatedAt: true, nextScoreRefreshAt: true },
+    });
+
+    if (!scoreState) {
+      return NextResponse.json(
+        { success: false, message: "Lead not found." },
+        { status: 404 },
+      );
+    }
+
+    const now = new Date();
+    if (
+      !scoreState.scoreCalculatedAt ||
+      (scoreState.nextScoreRefreshAt && scoreState.nextScoreRefreshAt <= now)
+    ) {
+      await prisma.$transaction((tx) => recalculateLeadScore(tx, id, now));
+    }
+
     const lead = await prisma.lead.findFirst({
       where: {
         id,
-        ...accessFilter(user),
+        ...access,
       },
       include: {
         portfolio: {
@@ -142,6 +158,10 @@ export async function GET(
             consultationType: true,
           },
         },
+        scoreHistory: {
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 20,
+        },
       },
     });
 
@@ -168,6 +188,9 @@ export async function PATCH(
   { params }: RouteContext,
 ) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
+
     const user = await getCurrentUser();
 
     if (!user) {
@@ -190,12 +213,18 @@ export async function PATCH(
     const existingLead = await prisma.lead.findFirst({
       where: {
         id,
-        ...accessFilter(user),
+        ...leadPortfolioScope(user),
       },
       select: {
         id: true,
+        portfolioId: true,
+        email: true,
+        emailNormalized: true,
+        phone: true,
+        phoneNormalized: true,
         status: true,
         temperature: true,
+        temperatureOverride: true,
         nextFollowUpAt: true,
       },
     });
@@ -210,7 +239,9 @@ export async function PATCH(
     const updateData: {
       name?: string;
       email?: string | null;
+      emailNormalized?: string | null;
       phone?: string | null;
+      phoneNormalized?: string | null;
       company?: string | null;
       location?: string | null;
       message?: string | null;
@@ -220,6 +251,7 @@ export async function PATCH(
       decisionMaker?: boolean | null;
       status?: LeadStatus;
       temperature?: LeadTemperature;
+      temperatureOverride?: boolean;
       nextFollowUpAt?: Date | null;
       convertedAt?: Date | null;
       lostAt?: Date | null;
@@ -247,19 +279,30 @@ export async function PATCH(
 
     if ("email" in data) {
       const email = clean(data.email, 254);
+      const normalizedEmail = normalizeLeadEmail(email);
 
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (email && (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))) {
         return NextResponse.json(
           { success: false, message: "Enter a valid email address." },
           { status: 400 },
         );
       }
 
-      updateData.email = email;
+      updateData.email = normalizedEmail;
+      updateData.emailNormalized = normalizedEmail;
     }
 
     if ("phone" in data) {
-      updateData.phone = clean(data.phone, 40);
+      const phone = clean(data.phone, 40);
+      const normalizedPhone = normalizeLeadPhone(phone);
+      if (phone && !normalizedPhone) {
+        return NextResponse.json(
+          { success: false, message: "Enter a valid international phone number, including its country code." },
+          { status: 400 },
+        );
+      }
+      updateData.phone = normalizedPhone;
+      updateData.phoneNormalized = normalizedPhone;
     }
 
     if ("company" in data) {
@@ -361,6 +404,7 @@ export async function PATCH(
 
       if (nextTemperature !== existingLead.temperature) {
         updateData.temperature = nextTemperature;
+        updateData.temperatureOverride = true;
 
         activities.push({
           type: "TEMPERATURE_CHANGE",
@@ -417,8 +461,31 @@ export async function PATCH(
       );
     }
 
-    const lead = await prisma.$transaction(async (tx) => {
-      return tx.lead.update({
+    const leadResult = await prisma.$transaction(async (tx) => {
+      const contactChanged =
+        updateData.emailNormalized !== undefined ||
+        updateData.phoneNormalized !== undefined;
+      if (contactChanged) {
+        const resultingEmail =
+          updateData.emailNormalized !== undefined
+            ? updateData.emailNormalized
+            : existingLead.emailNormalized ?? normalizeLeadEmail(existingLead.email);
+        const resultingPhone =
+          updateData.phoneNormalized !== undefined
+            ? updateData.phoneNormalized
+            : existingLead.phoneNormalized ?? normalizeLeadPhone(existingLead.phone);
+
+        await lockLeadContacts(tx, existingLead.portfolioId, resultingEmail, resultingPhone);
+        const duplicates = await findLeadContactDuplicates(tx, {
+          portfolioId: existingLead.portfolioId,
+          emailNormalized: resultingEmail,
+          phoneNormalized: resultingPhone,
+          excludeLeadId: existingLead.id,
+        });
+        if (duplicates.length) return { kind: "DUPLICATE" as const, duplicates };
+      }
+
+      await tx.lead.update({
         where: { id: existingLead.id },
         data: {
           ...updateData,
@@ -438,6 +505,10 @@ export async function PATCH(
               }
             : {}),
         },
+      });
+      await recalculateLeadScore(tx, existingLead.id);
+      const lead = await tx.lead.findUnique({
+        where: { id: existingLead.id },
         select: {
           id: true,
           name: true,
@@ -458,14 +529,33 @@ export async function PATCH(
           convertedAt: true,
           lostAt: true,
           updatedAt: true,
+          scoreBreakdown: true,
+          nextBestAction: true,
+          scoreHistory: {
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: 1,
+          },
         },
       });
+      return { kind: "UPDATED" as const, lead };
     });
+
+    if (leadResult.kind === "DUPLICATE") {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "LEAD_DUPLICATE",
+          message: "A lead with this phone number or email already exists.",
+          leads: leadResult.duplicates,
+        },
+        { status: 409, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
     return NextResponse.json({
       success: true,
       message: "Lead updated successfully.",
-      lead,
+      lead: leadResult.lead,
     });
   } catch (error) {
     console.error("PATCH /api/leads/[id] failed:", error);
@@ -482,6 +572,9 @@ export async function POST(
   { params }: RouteContext,
 ) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
+
     const user = await getCurrentUser();
 
     if (!user) {
@@ -514,6 +607,7 @@ export async function POST(
     const type = data.type as LeadActivityType;
     const title = clean(data.title, 160);
     const content = clean(data.content, 5000);
+    const consultationId = clean(data.consultationId, 100);
 
     if (!title) {
       return NextResponse.json(
@@ -538,7 +632,7 @@ export async function POST(
     const lead = await prisma.lead.findFirst({
       where: {
         id,
-        ...accessFilter(user),
+        ...leadPortfolioScope(user),
       },
       select: {
         id: true,
@@ -574,9 +668,25 @@ export async function POST(
       ...(data.channel !== undefined && clean(data.channel, 100)
         ? { channel: clean(data.channel, 100)! }
         : {}),
+      ...(consultationId ? { consultationId } : {}),
     };
 
-    const createdActivity = await prisma.$transaction(async (tx) => {
+    if (consultationId && type !== "MEETING") {
+      return NextResponse.json(
+        { success: false, message: "A consultation can only be linked to a meeting activity." },
+        { status: 400 },
+      );
+    }
+
+    const activityResult = await prisma.$transaction(async (tx) => {
+      if (consultationId) {
+        const linkedConsultation = await tx.consultation.findFirst({
+          where: { id: consultationId, leadId: lead.id },
+          select: { id: true },
+        });
+        if (!linkedConsultation) return { kind: "INVALID_CONSULTATION" as const };
+      }
+
       const activity = await tx.leadActivity.create({
         data: {
           leadId: lead.id,
@@ -607,14 +717,22 @@ export async function POST(
         },
       });
 
-      return activity;
+      await recalculateLeadScore(tx, lead.id);
+      return { kind: "CREATED" as const, activity };
     });
+
+    if (activityResult.kind === "INVALID_CONSULTATION") {
+      return NextResponse.json(
+        { success: false, message: "The linked consultation was not found for this lead." },
+        { status: 400 },
+      );
+    }
 
     return NextResponse.json(
       {
         success: true,
         message: "Activity recorded successfully.",
-        activity: createdActivity,
+        activity: activityResult.activity,
       },
       { status: 201 },
     );

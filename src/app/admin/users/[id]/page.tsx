@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSuperAdmin } from "../../../../lib/authorization";
 import { prisma } from "../../../../lib/prisma";
+import { UserGovernancePanel } from "../../../../components/admin/UserGovernancePanel";
 
 type AdminUserPageProps = {
   params: Promise<{
@@ -12,7 +13,7 @@ type AdminUserPageProps = {
 export default async function AdminUserPage({
   params,
 }: AdminUserPageProps) {
-  await requireSuperAdmin();
+  const administrator = await requireSuperAdmin();
 
   const { id } = await params;
 
@@ -90,6 +91,14 @@ export default async function AdminUserPage({
             >
               {portfolio?.published ? "Published" : "Draft"}
             </span>
+          </div>
+
+          <UserGovernancePanel userId={user.id} administratorId={administrator.id} />
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link href={`/admin/users/${encodeURIComponent(user.id)}/workspace`} className="rounded-xl border border-[#D9A441]/30 bg-[#D9A441]/10 px-5 py-3 text-sm font-medium text-[#F2CF86] transition hover:bg-[#D9A441]/20">
+              View Personal Workspace · audited read-only
+            </Link>
           </div>
 
           {!portfolio ? (

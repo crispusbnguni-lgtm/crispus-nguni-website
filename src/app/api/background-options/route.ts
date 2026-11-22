@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+const NO_STORE = { "Cache-Control": "private, no-store, max-age=0" };
 
 export async function GET() {
   try {
@@ -12,7 +13,7 @@ export async function GET() {
     if (!user) {
       return NextResponse.json(
         { success: false, message: "Please sign in." },
-        { status: 401 }
+        { status: 401, headers: NO_STORE }
       );
     }
 
@@ -35,7 +36,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       backgrounds,
-    });
+    }, { headers: NO_STORE });
   } catch (error) {
     console.error("Load background options error:", error);
 
@@ -44,7 +45,7 @@ export async function GET() {
         success: false,
         message: "Unable to load background options.",
       },
-      { status: 500 }
+      { status: 500, headers: NO_STORE }
     );
   }
 }

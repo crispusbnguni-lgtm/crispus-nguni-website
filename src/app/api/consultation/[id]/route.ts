@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { ConsultationStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { recalculateLeadScore } from "@/lib/lead-crm";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +44,18 @@ const detailInclude = {
   },
 };
 
+const allowedTransitions: Record<
+  ConsultationStatus,
+  readonly ConsultationStatus[]
+> = {
+  PENDING: ["CONFIRMED", "CANCELLED"],
+  CONFIRMED: ["COMPLETED", "CANCELLED", "NO_SHOW"],
+  COMPLETED: [],
+  CANCELLED: [],
+  NO_SHOW: [],
+  RESCHEDULED: [],
+};
+
 export async function GET(
   _request: Request,
   { params }: RouteContext,
@@ -74,7 +88,6 @@ export async function GET(
     });
   } catch (error) {
     console.error("GET /api/consultation/[id] failed:", error);
-
     return jsonError("Unable to load consultation activity.", 500);
   }
 }
@@ -84,6 +97,9 @@ export async function PATCH(
   { params }: RouteContext,
 ) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
+
     const user = await getCurrentUser();
 
     if (!user) {
@@ -142,8 +158,12 @@ export async function PATCH(
         where: accessWhere(user, id),
         select: {
           id: true,
+          leadId: true,
           status: true,
           cancellationReason: true,
+          title: true,
+          scheduledAt: true,
+          durationMinutes: true,
         },
       });
 
@@ -155,10 +175,31 @@ export async function PATCH(
         return { kind: "UNCHANGED" as const };
       }
 
+      if (newStatus === "RESCHEDULED") {
+        return { kind: "RESCHEDULE_UNAVAILABLE" as const };
+      }
+
+      if (!allowedTransitions[current.status].includes(newStatus)) {
+        return { kind: "INVALID_TRANSITION" as const };
+      }
+
       const now = new Date();
 
-      const updated = await tx.consultation.update({
-        where: { id: current.id },
+      if (newStatus === "NO_SHOW") {
+        const scheduledEnd =
+          current.scheduledAt.getTime() +
+          current.durationMinutes * 60_000;
+
+        if (now.getTime() < scheduledEnd) {
+          return { kind: "NO_SHOW_TOO_EARLY" as const };
+        }
+      }
+
+      const updated = await tx.consultation.updateMany({
+        where: {
+          id: current.id,
+          status: current.status,
+        },
         data: {
           status: newStatus,
 
@@ -177,20 +218,26 @@ export async function PATCH(
               }
             : {}),
         },
-        select: {
-          id: true,
-          status: true,
-        },
       });
+
+      // Compare-and-update prevents two concurrent requests from
+      // successfully applying transitions from the same old status.
+      if (updated.count !== 1) {
+        return { kind: "CONFLICT" as const };
+      }
 
       await tx.consultationActivity.create({
         data: {
-          consultationId: updated.id,
+          consultationId: current.id,
           userId: user.id,
           title:
             newStatus === "CANCELLED"
               ? "Consultation cancelled"
-              : "Consultation status updated",
+              : newStatus === "NO_SHOW"
+                ? "Consultation marked as no-show"
+                : newStatus === "COMPLETED"
+                  ? "Consultation completed"
+                  : "Consultation confirmed",
           content:
             newStatus === "CANCELLED"
               ? `Status changed from ${current.status} to CANCELLED. Reason: ${cancellationReason}`
@@ -206,11 +253,72 @@ export async function PATCH(
         },
       });
 
+      if (newStatus === "COMPLETED") {
+        const existingMeetingActivity = await tx.leadActivity.findFirst({
+          where: {
+            leadId: current.leadId,
+            type: "MEETING",
+            metadata: {
+              path: ["consultationId"],
+              equals: current.id,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (!existingMeetingActivity) {
+          await tx.leadActivity.create({
+            data: {
+              leadId: current.leadId,
+              userId: user.id,
+              type: "MEETING",
+              title: "Consultation completed",
+              content: current.title,
+              metadata: {
+                consultationId: current.id,
+                source: "CONSULTATION_STATUS",
+              },
+              createdAt: now,
+            },
+          });
+        }
+      }
+
+      await recalculateLeadScore(tx, current.leadId, now);
+
       return { kind: "UPDATED" as const };
     });
 
     if (result.kind === "NOT_FOUND") {
       return jsonError("Consultation not found.", 404);
+    }
+
+    if (result.kind === "RESCHEDULE_UNAVAILABLE") {
+      return jsonError(
+        "Use a dedicated rescheduling flow to move this consultation. That workflow is not available yet.",
+        409,
+      );
+    }
+
+    if (result.kind === "INVALID_TRANSITION") {
+      return jsonError(
+        "This consultation has reached a status from which that transition is not permitted.",
+        409,
+      );
+    }
+
+    if (result.kind === "NO_SHOW_TOO_EARLY") {
+      return jsonError(
+        "A consultation can only be marked as a no-show after its scheduled end time.",
+        409,
+      );
+    }
+
+    if (result.kind === "CONFLICT") {
+      return jsonError(
+        "The consultation was updated by another request. Refresh and try again.",
+        409,
+      );
     }
 
     const consultation = await prisma.consultation.findFirst({
@@ -232,7 +340,6 @@ export async function PATCH(
     });
   } catch (error) {
     console.error("PATCH /api/consultation/[id] failed:", error);
-
     return jsonError("Unable to update consultation status.", 500);
   }
 }

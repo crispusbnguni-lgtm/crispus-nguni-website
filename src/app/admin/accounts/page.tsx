@@ -12,6 +12,14 @@ type Account = {
   email: string;
   role: string;
   createdAt: string;
+  accountStatus: "ACTIVE" | "SUSPENDED" | "BANNED";
+  accountStatusReason: string | null;
+  accountSuspendedUntil: string | null;
+  verificationStatus: "PENDING" | "VERIFIED" | "REJECTED";
+  verificationReason: string | null;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  mfaEnrolled: boolean;
   portfolioSite: {
     id: string;
     slug: string;
@@ -105,12 +113,16 @@ export default async function AdminAccountsPage({
   searchParams: Promise<{
     search?: string;
     page?: string;
+    accountStatus?: string;
+    verificationStatus?: string;
   }>;
 }) {
   await requireSuperAdmin();
 
   const params = await searchParams;
   const search = (params.search ?? "").trim().slice(0, 100);
+  const accountStatus = ["ACTIVE", "SUSPENDED", "BANNED"].includes(params.accountStatus ?? "") ? params.accountStatus! : "";
+  const verificationStatus = ["PENDING", "VERIFIED", "REJECTED"].includes(params.verificationStatus ?? "") ? params.verificationStatus! : "";
   const parsedPage = Number(params.page ?? "1");
   const page =
     Number.isSafeInteger(parsedPage) && parsedPage > 0
@@ -119,6 +131,8 @@ export default async function AdminAccountsPage({
 
   const query = new URLSearchParams();
   if (search) query.set("search", search);
+  if (accountStatus) query.set("accountStatus", accountStatus);
+  if (verificationStatus) query.set("verificationStatus", verificationStatus);
   query.set("page", String(page));
 
   const incomingHeaders = await headers();
@@ -188,6 +202,8 @@ export default async function AdminAccountsPage({
   function pageHref(nextPage: number) {
     const next = new URLSearchParams();
     if (search) next.set("search", search);
+    if (accountStatus) next.set("accountStatus", accountStatus);
+    if (verificationStatus) next.set("verificationStatus", verificationStatus);
     next.set("page", String(nextPage));
     return `/admin/accounts?${next.toString()}`;
   }
@@ -300,32 +316,6 @@ export default async function AdminAccountsPage({
             </p>
           </div>
 
-          <nav
-            aria-label="Account administration"
-            className="flex flex-wrap gap-2"
-          >
-            <Link
-              href="/admin"
-              className={buttonClass}
-              style={{ borderColor: "var(--accounts-border)" }}
-            >
-              Admin Home
-            </Link>
-            <Link
-              href="/admin#display-studio"
-              className={buttonClass}
-              style={{ borderColor: "var(--accounts-border)" }}
-            >
-              Display Studio
-            </Link>
-            <Link
-              href="/admin/sessions"
-              className={buttonClass}
-              style={{ borderColor: "var(--accounts-border)" }}
-            >
-              Sessions &amp; Devices
-            </Link>
-          </nav>
         </header>
 
         <section className="py-9 sm:py-12">
@@ -407,6 +397,15 @@ export default async function AdminAccountsPage({
                   color: "var(--accounts-text)",
                 }}
               />
+
+              <label className="sr-only" htmlFor="account-status-filter">Filter by account status</label>
+              <select id="account-status-filter" name="accountStatus" defaultValue={accountStatus} className="min-h-12 rounded-xl border bg-transparent px-3 text-sm" style={{ borderColor: "var(--accounts-border)", color: "var(--accounts-text)" }}>
+                <option value="">All account states</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="BANNED">Banned</option>
+              </select>
+              <label className="sr-only" htmlFor="verification-status-filter">Filter by review status</label>
+              <select id="verification-status-filter" name="verificationStatus" defaultValue={verificationStatus} className="min-h-12 rounded-xl border bg-transparent px-3 text-sm" style={{ borderColor: "var(--accounts-border)", color: "var(--accounts-text)" }}>
+                <option value="">All review states</option><option value="PENDING">Pending review</option><option value="VERIFIED">Verified</option><option value="REJECTED">Rejected</option>
+              </select>
 
               <button
                 type="submit"
@@ -495,6 +494,8 @@ export default async function AdminAccountsPage({
                             {account.status}
                           </span>
 
+                          <span className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: "var(--accounts-border)", color: account.accountStatus === "ACTIVE" ? "var(--accounts-good)" : account.accountStatus === "BANNED" ? "#D9534F" : "var(--accounts-warning)" }}>{account.accountStatus}</span>
+
                           <span
                             className="rounded-full border px-2.5 py-1 text-xs"
                             style={{
@@ -512,6 +513,13 @@ export default async function AdminAccountsPage({
                         >
                           {account.email}
                         </p>
+
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs" style={{ color: "var(--accounts-muted)" }}>
+                          <span>{account.verificationStatus} review</span><span>·</span>
+                          <span>Email {account.emailVerified ? "verified" : "unverified"}</span><span>·</span>
+                          <span>Phone {account.phoneVerified ? "verified" : "unverified"}</span><span>·</span>
+                          <span>MFA {account.mfaEnrolled ? "enrolled" : "not enrolled"}</span>
+                        </div>
 
                         <p
                           className="mt-3 text-xs leading-5"
@@ -575,6 +583,7 @@ export default async function AdminAccountsPage({
                       </div>
 
                       <div className="flex min-w-0 flex-col gap-3 xl:w-80 xl:shrink-0">
+                        <Link href={`/admin/users/${encodeURIComponent(account.id)}`} className={`${buttonClass} font-semibold`} style={{ borderColor: "var(--accounts-border)", color: "var(--accounts-accent)" }}>Manage account</Link>
                         <LiquidLensSurface
                           radius={18}
                           intensity="subtle"

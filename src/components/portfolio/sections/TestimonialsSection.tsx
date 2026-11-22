@@ -96,22 +96,19 @@ export function TestimonialsSection({
                 </blockquote>
 
                 <div className="mt-8 flex items-center gap-4">
-                  {testimonial.image ? (
-                    <img
+                  <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/10 bg-[#126BFF]/10">
+                    <PortfolioImage
                       src={testimonial.image}
                       alt={testimonial.name}
-                      className="h-12 w-12 rounded-full border border-white/10 object-cover"
+                      className="object-cover"
+                      sizes="48px"
+                      fallback={(
+                        <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#126BFF]" aria-hidden="true">
+                          {testimonial.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
                     />
-                  ) : (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#126BFF]/10 text-sm font-semibold text-[#126BFF]">
-                      {testimonial.name
-                        .split(" ")
-                        .map((part) => part[0])
-                        .join("")
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </div>
-                  )}
+                  </div>
 
                   <div>
                     <p className="text-sm font-semibold">
@@ -145,3 +142,4 @@ export function TestimonialsSection({
     </section>
   );
 }
+import { PortfolioImage } from "@/components/portfolio/PortfolioImage";

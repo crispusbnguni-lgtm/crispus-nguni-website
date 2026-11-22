@@ -9,6 +9,7 @@ import {
   type ReaderPreferences,
 } from "@/components/ui/ReaderProvider";
 import { LiquidLensSurface } from "@/components/ui/LiquidLensSurface";
+import { LensGlass } from "@/components/ui/LensGlass";
 
 type DisplayStudioMode = "global" | "personal";
 
@@ -210,10 +211,6 @@ function isOneOf<T extends string>(
   );
 }
 
-/**
- * Validate settings received from the server before using them.
- * Missing or invalid values fall back to the built-in defaults.
- */
 function sanitizePreferences(input: unknown): ReaderPreferences {
   const raw =
     input !== null && typeof input === "object" && !Array.isArray(input)
@@ -390,42 +387,66 @@ function RangeControl({
   reduceMotion: boolean;
   onChange: (value: number) => void;
 }) {
+  const progress =
+    max > min ? ((value - min) / (max - min)) * 100 : 0;
+
   return (
     <div
-      className={`min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 ${
+      className={`group relative min-w-0 overflow-hidden rounded-[22px] border border-white/[0.09] bg-white/[0.035] p-4 backdrop-blur-xl ${
         reduceMotion
           ? ""
-          : "transition duration-300 hover:border-white/[0.16] hover:bg-white/[0.045]"
+          : "transition-all duration-300 hover:border-white/[0.17] hover:bg-white/[0.055] hover:shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
       }`}
     >
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+      <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="break-words text-sm font-medium text-white/90">
+          <p className="text-sm font-semibold tracking-tight text-white/90">
             {label}
           </p>
-          <p className="mt-1 break-words text-xs leading-5 text-white/45">
+          <p className="mt-1 text-xs leading-5 text-white/45">
             {description}
           </p>
         </div>
 
-        <output className="shrink-0 rounded-lg border border-white/10 bg-white/[0.06] px-2 py-1 text-xs font-medium tabular-nums text-white/75">
+        <output className="shrink-0 rounded-full border border-blue-300/20 bg-blue-400/[0.10] px-3 py-1.5 text-xs font-semibold tabular-nums text-blue-200">
           {formatValue(value, percent)}
         </output>
       </div>
 
-      <input
-        aria-label={label}
-        aria-valuetext={formatValue(value, percent)}
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="mt-5 block w-full cursor-pointer accent-[#126BFF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#126BFF] focus-visible:ring-offset-4 focus-visible:ring-offset-[#080B12]"
-      />
+      <div className="mt-6 px-1">
+        <input
+          aria-label={label}
+          aria-valuetext={formatValue(value, percent)}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(event) => onChange(Number(event.target.value))}
+          style={{
+            background: `linear-gradient(to right, #60a5fa 0%, #3b82f6 ${progress}%, rgba(255,255,255,0.13) ${progress}%, rgba(255,255,255,0.13) 100%)`,
+          }}
+          className={`block h-2 w-full cursor-pointer appearance-none rounded-full outline-none
+            [&::-webkit-slider-thumb]:h-5
+            [&::-webkit-slider-thumb]:w-5
+            [&::-webkit-slider-thumb]:appearance-none
+            [&::-webkit-slider-thumb]:rounded-full
+            [&::-webkit-slider-thumb]:border-[3px]
+            [&::-webkit-slider-thumb]:border-white
+            [&::-webkit-slider-thumb]:bg-[#3b82f6]
+            [&::-webkit-slider-thumb]:shadow-[0_0_0_4px_rgba(59,130,246,0.18),0_2px_8px_rgba(0,0,0,0.35)]
+            [&::-moz-range-thumb]:h-3
+            [&::-moz-range-thumb]:w-3
+            [&::-moz-range-thumb]:rounded-full
+            [&::-moz-range-thumb]:border-[3px]
+            [&::-moz-range-thumb]:border-white
+            [&::-moz-range-thumb]:bg-[#3b82f6]
+            focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-4 focus-visible:ring-offset-[#101521]
+            ${reduceMotion ? "" : "transition-shadow duration-200 hover:shadow-[0_0_12px_rgba(59,130,246,0.22)]"}`}
+        />
+      </div>
 
-      <div className="mt-1 flex justify-between text-[10px] text-white/30">
+      <div className="mt-3 flex justify-between text-[10px] font-medium tabular-nums text-white/35">
         <span>{formatValue(min, percent)}</span>
         <span>{formatValue(max, percent)}</span>
       </div>
@@ -446,17 +467,123 @@ function ChoiceControl({
   reduceMotion: boolean;
   onChange: (value: string) => void;
 }) {
+  const isVisualChoice =
+    label === "Appearance preset" || label === "Color mode";
+
+  const gradients: Record<string, string> = {
+    crispus: "from-slate-950 via-blue-900 to-amber-400",
+    crystal: "from-sky-200 via-cyan-400 to-white",
+    emerald: "from-emerald-950 via-emerald-500 to-lime-200",
+    light: "from-slate-100 via-white to-slate-300",
+    dark: "from-slate-950 via-slate-800 to-slate-500",
+    sepia: "from-amber-950 via-amber-700 to-amber-200",
+  };
+
+  if (isVisualChoice) {
+    return (
+      <div className="min-w-0">
+        <p className="mb-3 text-sm font-semibold text-white/85">
+          {label}
+        </p>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {options.map((option) => {
+            const selected = value === option.value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onChange(option.value)}
+                className={`group relative min-w-0 overflow-hidden rounded-[20px] border p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101521] ${
+                  reduceMotion ? "" : "transition-all duration-300 hover:-translate-y-0.5"
+                } ${
+                  selected
+                    ? "border-blue-400/80 bg-blue-400/[0.10] shadow-[0_0_0_1px_rgba(96,165,250,0.22),0_8px_24px_rgba(37,99,235,0.12)]"
+                    : "border-white/[0.09] bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.055]"
+                }`}
+              >
+                <div
+                  className={`relative h-14 overflow-hidden rounded-xl bg-gradient-to-br ${
+                    gradients[option.value] ?? "from-slate-700 to-slate-400"
+                  }`}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-tr from-black/20 via-transparent to-white/30" />
+
+                  {selected && (
+                    <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/50 bg-blue-500 text-xs font-bold text-white shadow-lg">
+                      ✓
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-1 px-1 pb-1 pt-3">
+                  <span className="truncate text-xs font-semibold text-white/85">
+                    {option.label}
+                  </span>
+
+                  {selected && (
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.8)]" />
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (options.length <= 3) {
+    return (
+      <div className="min-w-0">
+        <p className="mb-3 text-sm font-medium text-white/75">
+          {label}
+        </p>
+
+        <div
+          role="group"
+          aria-label={label}
+          className="flex min-w-0 flex-wrap gap-1 rounded-2xl border border-white/[0.08] bg-black/20 p-1"
+        >
+          {options.map((option) => {
+            const selected = value === option.value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onChange(option.value)}
+                className={`min-h-10 min-w-0 flex-1 rounded-xl px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+                  reduceMotion ? "" : "transition-all duration-200"
+                } ${
+                  selected
+                    ? "border border-white/10 bg-white/[0.13] text-white shadow-[0_2px_10px_rgba(0,0,0,0.16)]"
+                    : "border border-transparent text-white/45 hover:bg-white/[0.05] hover:text-white/80"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <label className="block min-w-0">
-      <span className="mb-2 block break-words text-sm font-medium text-white/75">
+      <span className="mb-2 block text-sm font-medium text-white/75">
         {label}
       </span>
 
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`block min-h-11 w-full min-w-0 rounded-xl border border-white/10 bg-[#101521]/95 px-3 py-2 text-sm text-white outline-none focus:border-[#126BFF]/70 focus:ring-2 focus:ring-[#126BFF]/20 ${
-          reduceMotion ? "" : "transition-colors duration-200"
+        className={`block min-h-12 w-full min-w-0 rounded-2xl border border-white/[0.10] bg-[#101521]/95 px-4 py-3 text-sm text-white outline-none focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/20 ${
+          reduceMotion ? "" : "transition-all duration-200"
         }`}
       >
         {options.map((option) => (
@@ -484,17 +611,19 @@ function ToggleControl({
 }) {
   return (
     <div
-      className={`flex min-w-0 items-center justify-between gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 ${
-        reduceMotion
-          ? ""
-          : "transition duration-300 hover:border-white/[0.16] hover:bg-white/[0.045]"
+      className={`flex min-w-0 items-center justify-between gap-4 rounded-[22px] border p-4 backdrop-blur-xl ${
+        reduceMotion ? "" : "transition-all duration-300"
+      } ${
+        checked
+          ? "border-blue-400/20 bg-blue-400/[0.055]"
+          : "border-white/[0.08] bg-white/[0.025] hover:border-white/[0.15]"
       }`}
     >
       <div className="min-w-0 flex-1">
-        <p className="break-words text-sm font-medium text-white/85">
+        <p className="text-sm font-semibold text-white/85">
           {label}
         </p>
-        <p className="mt-1 break-words text-xs leading-5 text-white/45">
+        <p className="mt-1 text-xs leading-5 text-white/45">
           {description}
         </p>
       </div>
@@ -505,17 +634,17 @@ function ToggleControl({
         aria-checked={checked}
         aria-label={label}
         onClick={() => onChange(!checked)}
-        className={`relative h-7 w-12 shrink-0 rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#126BFF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#080B12] ${
-          reduceMotion ? "" : "transition-colors duration-200"
+        className={`relative h-8 w-[52px] shrink-0 rounded-full border p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101521] ${
+          reduceMotion ? "" : "transition-colors duration-300"
         } ${
           checked
-            ? "border-[#126BFF] bg-[#126BFF]"
-            : "border-white/15 bg-white/10"
+            ? "border-blue-400/80 bg-blue-500 shadow-[0_0_14px_rgba(59,130,246,0.22)]"
+            : "border-white/15 bg-white/[0.10]"
         }`}
       >
         <span
-          className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm ${
-            reduceMotion ? "" : "transition-transform duration-200"
+          className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow-[0_2px_6px_rgba(0,0,0,0.3)] ${
+            reduceMotion ? "" : "transition-transform duration-300 ease-out"
           } ${checked ? "translate-x-5" : "translate-x-0"}`}
         />
       </button>
@@ -539,26 +668,23 @@ export function DisplayStudioEditor({
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(true);
 
-  // Respect both the operating-system preference and the selected setting.
   const reduceMotion =
     Boolean(systemPrefersReducedMotion) ||
     (mode === "personal"
       ? reader.preferences.reduceMotion
       : draftPreferences.reduceMotion);
 
-  // Personal settings apply immediately through ReaderProvider.
-  // Global settings remain a separate draft until explicitly saved.
   const preferences =
     mode === "personal" ? reader.preferences : draftPreferences;
 
   const isLoading = mode === "global" && loading;
 
   useEffect(() => {
-  if (mode !== "global") {
-    return;
-  }
+    if (mode !== "global") {
+      return;
+    }
 
-  let active = true;
+    let active = true;
 
     async function loadSettings() {
       try {
@@ -609,7 +735,12 @@ export function DisplayStudioEditor({
     value: ReaderPreferences[K],
   ) {
     if (mode === "personal") {
-      reader.updatePreference(key, value);
+      const persisted = reader.updatePreference(key, value);
+      if (!persisted) {
+        setMessage("");
+        setError("This change applies for the current visit, but browser storage is unavailable so it may not persist after reload.");
+        return;
+      }
     } else {
       setDraftPreferences((current) => ({
         ...current,
@@ -656,6 +787,7 @@ export function DisplayStudioEditor({
       }
 
       setDraftPreferences(safePreferences);
+      window.dispatchEvent(new Event("display-studio:defaults-updated"));
       setMessage("Global display defaults saved successfully.");
     } catch (cause) {
       setError(
@@ -670,10 +802,13 @@ export function DisplayStudioEditor({
 
   function resetEditor() {
     if (mode === "personal") {
-      reader.resetPreferences();
-      setMessage(
-        "Personal overrides reset. Your workspace will use the current global defaults.",
-      );
+      const persisted = reader.resetPreferences();
+      if (!persisted) {
+        setMessage("");
+        setError("Defaults are active for this visit, but browser storage could not be cleared; the reset may not persist after reload.");
+        return;
+      }
+      setMessage("Personal overrides reset. Your workspace will use the current global defaults.");
     } else {
       setDraftPreferences({ ...defaultReaderPreferences });
       setMessage("");
@@ -701,6 +836,28 @@ export function DisplayStudioEditor({
       : preferences.colorMode === "sepia"
         ? "#f1dfbd"
         : "#ffffff";
+
+  const previewAccent =
+    preferences.appearancePreset === "emerald"
+      ? "#34D399"
+      : preferences.appearancePreset === "crystal"
+        ? "#67E8F9"
+        : preferences.appearancePreset === "light"
+          ? "#64748B"
+          : "#3B82F6";
+
+  const previewCardBackground =
+    preferences.reduceTransparency
+      ? preferences.colorMode === "light"
+        ? "rgba(245,247,250,0.98)"
+        : preferences.colorMode === "sepia"
+          ? "rgba(245,231,204,0.98)"
+          : "rgba(20,28,42,0.98)"
+      : preferences.colorMode === "light"
+        ? "rgba(255,255,255,0.48)"
+        : preferences.colorMode === "sepia"
+          ? "rgba(90,65,35,0.20)"
+          : "rgba(255,255,255,0.07)";
 
   const previewFontFamily =
     preferences.fontFamily === "serif"
@@ -768,6 +925,26 @@ export function DisplayStudioEditor({
                   ? "Set the starting appearance, glass effects, typography and accessibility options for visitors across your platform."
                   : "Personalize your glass effects, typography and accessibility settings. Your preferences are saved automatically in this browser and remain separate from global defaults."}
               </p>
+              {mode === "personal" && (
+                <div className="mt-3 space-y-1 text-xs leading-5">
+                  <p className="text-white/55">
+                    {reader.overriddenPreferenceKeys.length === 0
+                      ? "All preferences inherit the latest website defaults."
+                      : `${reader.overriddenPreferenceKeys.length} personal override${reader.overriddenPreferenceKeys.length === 1 ? "" : "s"}; the rest inherit the latest website defaults.`}
+                  </p>
+                  {reader.globalDefaultsStatus === "loading" && (
+                    <p role="status" className="text-white/50">Checking website defaults…</p>
+                  )}
+                  {reader.globalDefaultsStatus === "unavailable" && (
+                    <p role="alert" className="text-amber-200">
+                      Website defaults are unavailable. Built-in defaults are active until they can be loaded.
+                    </p>
+                  )}
+                  {reader.globalDefaultsStatus === "available" && (
+                    <p role="status" className="text-emerald-200">Website defaults are up to date.</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -936,19 +1113,26 @@ export function DisplayStudioEditor({
                     </p>
                   </div>
 
-                  <div
+                  <LensGlass
                     className={`relative isolate min-w-0 overflow-hidden rounded-3xl border p-4 sm:p-5 ${
                       reduceMotion ? "" : "transition-all duration-500"
                     }`}
+                    glassConfig={{
+                      enabled: true,
+                      strength: preferences.glassLevel,
+                      frost: preferences.reduceTransparency ? 0 : preferences.frostLevel,
+                      transparency: preferences.reduceTransparency
+                        ? Math.min(preferences.transparency, 0.35)
+                        : preferences.transparency,
+                      reflection: preferences.reflectionLevel,
+                      depth: preferences.glassDepth,
+                      radius: 24,
+                    }}
                     style={{
                       borderColor: `rgba(255,255,255,${0.1 + preferences.reflectionLevel * 0.35})`,
-                      background: previewBackground,
-                      backdropFilter: preferences.reduceTransparency
-                        ? "none"
-                        : `blur(${2 + preferences.frostLevel * 28}px) saturate(${110 + preferences.glassLevel * 70}%)`,
-                      WebkitBackdropFilter: preferences.reduceTransparency
-                        ? "none"
-                        : `blur(${2 + preferences.frostLevel * 28}px) saturate(${110 + preferences.glassLevel * 70}%)`,
+                      background: preferences.reduceTransparency
+                        ? previewBackground
+                        : `radial-gradient(circle at 85% 8%, ${previewAccent}30, transparent 42%), ${previewBackground}`,
                       boxShadow: `0 ${8 + preferences.glassDepth * 20}px ${24 + preferences.glassDepth * 30}px rgba(0,0,0,${0.12 + preferences.glassDepth * 0.18})`,
                       color: previewTextColor,
                       fontFamily: previewFontFamily,
@@ -992,16 +1176,19 @@ export function DisplayStudioEditor({
                         reduceMotion ? "" : "transition-all duration-500"
                       }`}
                       style={{
-                        borderColor: `rgba(255,255,255,${0.08 + preferences.reflectionLevel * 0.28})`,
-                        background: preferences.reduceTransparency
-                          ? "rgba(20,28,42,0.96)"
-                          : `rgba(255,255,255,${Math.max(0.025, (1 - preferences.transparency) * 0.2)})`,
-                        boxShadow: `0 8px 24px rgba(0,0,0,${preferences.glassDepth * 0.16})`,
+                        borderColor: `${previewAccent}55`,
+                        background: previewCardBackground,
+                        boxShadow: `0 12px 32px rgba(0,0,0,${preferences.glassDepth * 0.20})`,
                       }}
                     >
                       <div className="flex items-center gap-3">
                         <div
-                          className="h-10 w-10 shrink-0 rounded-xl bg-[#126BFF]/20 ring-1 ring-[#126BFF]/30"
+                          className="h-10 w-10 shrink-0 rounded-xl ring-1"
+                          style={{
+                            backgroundColor: `${previewAccent}30`,
+                            boxShadow: `inset 0 1px 1px rgba(255,255,255,0.25), 0 4px 16px ${previewAccent}25`,
+                            borderColor: `${previewAccent}55`,
+                          }}
                           aria-hidden="true"
                         />
                         <div className="min-w-0 flex-1">
@@ -1015,12 +1202,21 @@ export function DisplayStudioEditor({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      className="mt-5 min-h-11 max-w-full rounded-xl bg-[#126BFF] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2477ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                    >
-                      Explore the experience
-                    </button>
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      <span className="text-xs font-medium opacity-60">
+                        Primary action style
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className="inline-flex min-h-10 max-w-full items-center rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-lg"
+                        style={{
+                          backgroundColor: previewAccent,
+                          boxShadow: `0 8px 24px ${previewAccent}35`,
+                        }}
+                      >
+                        Sample action
+                      </span>
+                    </div>
 
                     {preferences.highContrast && (
                       <p className="mt-4 rounded-lg border border-current/30 px-3 py-2 text-xs font-semibold">
@@ -1051,7 +1247,7 @@ export function DisplayStudioEditor({
                         Focus mode enabled
                       </p>
                     )}
-                  </div>
+                  </LensGlass>
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <div className="min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3">

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
+import { reportOperationalFailure } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export async function GET() {
   try {
@@ -11,7 +14,7 @@ export async function GET() {
     if (!user) {
       return NextResponse.json(
         { success: false, message: "Authentication required." },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -43,28 +46,31 @@ export async function GET() {
       success: true,
       notifications,
       unreadCount,
-    });
-  } catch (error) {
-    console.error("GET /api/notifications failed:", error);
+    }, { headers: NO_STORE_HEADERS });
+  } catch (cause) {
+    reportOperationalFailure("NOTIFICATIONS_READ_FAILED", { cause });
 
     return NextResponse.json(
       {
         success: false,
         message: "Unable to load notifications.",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
 
 export async function PATCH(request: Request) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
+
     const user = await getCurrentUser();
 
     if (!user) {
       return NextResponse.json(
         { success: false, message: "Authentication required." },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -78,7 +84,7 @@ export async function PATCH(request: Request) {
     ) {
       return NextResponse.json(
         { success: false, message: "A valid action is required." },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -96,7 +102,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({
         success: true,
         updatedCount: result.count,
-      });
+      }, { headers: NO_STORE_HEADERS });
     }
 
     if (
@@ -131,27 +137,27 @@ export async function PATCH(request: Request) {
               success: false,
               message: "Notification not found.",
             },
-            { status: 404 },
+            { status: 404, headers: NO_STORE_HEADERS },
           );
         }
       }
 
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true }, { headers: NO_STORE_HEADERS });
     }
 
     return NextResponse.json(
       { success: false, message: "Unsupported notification action." },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
-  } catch (error) {
-    console.error("PATCH /api/notifications failed:", error);
+  } catch (cause) {
+    reportOperationalFailure("NOTIFICATIONS_UPDATE_FAILED", { cause });
 
     return NextResponse.json(
       {
         success: false,
         message: "Unable to update notifications.",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

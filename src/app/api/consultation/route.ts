@@ -1,8 +1,15 @@
+
 import { NextResponse } from "next/server";
 import { ConsultationStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { getAvailabilitySlots } from "@/lib/consultations/availability";
+import {
+  getAvailabilitySlots,
+  getZonedDayRange,
+  isValidIanaTimezone,
+} from "@/lib/consultations/availability";
+import { recalculateLeadScore } from "@/lib/lead-crm";
+import { requireSameOriginApiRequest } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -38,31 +45,6 @@ function getDateKey(date: Date, timezone: string): string {
   }
 
   return `${values.year}-${values.month}-${values.day}`;
-}
-
-function getUtcDayRange(dateKey: string) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-
-  return {
-    startDate: new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-      ),
-    ),
-    endDate: new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    ),
-  };
 }
 
 export async function GET(request: Request) {
@@ -130,6 +112,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const originResponse = requireSameOriginApiRequest(request);
+    if (originResponse) return originResponse;
+
     const user = await getCurrentUser();
 
     if (!user) {
@@ -163,7 +148,6 @@ export async function POST(request: Request) {
     const leadId = text(data.leadId, 100);
     const consultationTypeId = text(data.consultationTypeId, 100);
     const title = text(data.title, 200);
-    const timezone = text(data.timezone, 100) ?? "Africa/Nairobi";
     const meetingMethod = text(data.meetingMethod, 100);
     const meetingUrl = text(data.meetingUrl, 1000);
     const meetingLocation = text(data.meetingLocation, 500);
@@ -199,31 +183,14 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/.test(timezone) ||
-      timezone.length > 100
-    ) {
-      return NextResponse.json(
-        { success: false, message: "Invalid timezone." },
-        { status: 400 },
-      );
-    }
-
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
-    } catch {
-      return NextResponse.json(
-        { success: false, message: "Unsupported timezone." },
-        { status: 400 },
-      );
-    }
-
     const portfolio = await prisma.portfolioSite.findUnique({
       where: { id: portfolioId },
       select: {
         id: true,
         userId: true,
         published: true,
+        timezone: true,
+        timezoneReviewRequired: true,
       },
     });
 
@@ -237,15 +204,51 @@ export async function POST(request: Request) {
       );
     }
 
-    const [lead, consultationType] = await Promise.all([
-      prisma.lead.findFirst({
-        where: {
-          id: leadId,
-          portfolioId: portfolio.id,
+    if (
+      portfolio.timezoneReviewRequired ||
+      !isValidIanaTimezone(portfolio.timezone)
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Resolve the portfolio timezone before scheduling consultations.",
         },
-        select: { id: true },
-      }),
-      prisma.consultationType.findFirst({
+        { status: 409 },
+      );
+    }
+
+    const timezone = portfolio.timezone;
+
+    const lead = await prisma.lead.findFirst({
+      where: {
+        id: leadId,
+        portfolioId: portfolio.id,
+      },
+      select: { id: true },
+    });
+
+    if (!lead) {
+      return NextResponse.json(
+        { success: false, message: "Lead not found in this portfolio." },
+        { status: 404 },
+      );
+    }
+
+    const dateKey = getDateKey(scheduledAt, timezone);
+    const { startDate, endDate } = getZonedDayRange(dateKey, timezone);
+    const lockKey = portfolio.id;
+
+    const booking = await prisma.$transaction(async (tx) => {
+      // Serialize booking attempts and consultation configuration changes
+      // for this portfolio using the same advisory lock.
+      await tx.$queryRaw`
+  SELECT pg_advisory_xact_lock(hashtext(${lockKey}))
+`;
+
+      // Re-fetch the consultation type after acquiring the lock.
+      // This prevents using a stale or deactivated type.
+      const consultationType = await tx.consultationType.findFirst({
         where: {
           id: consultationTypeId,
           portfolioId: portfolio.id,
@@ -257,43 +260,20 @@ export async function POST(request: Request) {
           durationMinutes: true,
           meetingMethod: true,
         },
-      }),
-    ]);
+      });
 
-    if (!lead) {
-      return NextResponse.json(
-        { success: false, message: "Lead not found in this portfolio." },
-        { status: 404 },
-      );
-    }
+      if (!consultationType) {
+        return { kind: "TYPE_UNAVAILABLE" as const };
+      }
 
-    if (!consultationType) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Active consultation type not found in this portfolio.",
-        },
-        { status: 404 },
-      );
-    }
-
-    const dateKey = getDateKey(scheduledAt, timezone);
-    const { startDate, endDate } = getUtcDayRange(dateKey);
-    const lockKey = portfolio.id;
-
-    const consultation = await prisma.$transaction(async (tx) => {
-      // Serialize booking attempts for this portfolio and calendar day.
-      // The public booking endpoint uses this same lock key.
-      await tx.$queryRaw`
-        SELECT pg_advisory_xact_lock(hashtext(${lockKey}))
-      `;
-
-      // Availability must be checked after obtaining the lock.
+      // Availability is checked using the freshly fetched type and
+      // the same transaction that will create the consultation.
       const availableSlots = await getAvailabilitySlots({
         portfolioId: portfolio.id,
         consultationTypeId: consultationType.id,
         startDate,
         endDate,
+        client: tx,
       });
 
       const selectedSlot = availableSlots.find(
@@ -301,10 +281,10 @@ export async function POST(request: Request) {
       );
 
       if (!selectedSlot) {
-        return null;
+        return { kind: "SLOT_UNAVAILABLE" as const };
       }
 
-      return tx.consultation.create({
+      const createdConsultation = await tx.consultation.create({
         data: {
           portfolioId: portfolio.id,
           leadId: lead.id,
@@ -344,9 +324,27 @@ export async function POST(request: Request) {
           consultationType: true,
         },
       });
+
+      await recalculateLeadScore(tx, lead.id);
+
+      return {
+        kind: "BOOKED" as const,
+        consultation: createdConsultation,
+      };
     });
 
-    if (!consultation) {
+    if (booking.kind === "TYPE_UNAVAILABLE") {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Active consultation type not found in this portfolio.",
+          code: "TYPE_UNAVAILABLE",
+        },
+        { status: 404 },
+      );
+    }
+
+    if (booking.kind === "SLOT_UNAVAILABLE") {
       return NextResponse.json(
         {
           success: false,
@@ -362,7 +360,7 @@ export async function POST(request: Request) {
       {
         success: true,
         message: "Consultation created successfully.",
-        consultation,
+        consultation: booking.consultation,
       },
       { status: 201 },
     );

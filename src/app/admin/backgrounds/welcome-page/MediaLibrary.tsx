@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+
 type MediaAsset = {
   path: string;
   url: string;
@@ -24,6 +25,31 @@ type ApiResponse = {
   asset?: MediaAsset;
 };
 
+function uploadWithProgress(file: File, onProgress: (percent: number) => void): Promise<ApiResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/admin/backgrounds/welcome-page/media");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+    };
+    xhr.onerror = () => reject(new Error("Upload could not reach the server."));
+    xhr.onabort = () => reject(new Error("Upload was cancelled."));
+    xhr.onload = () => {
+      let result: ApiResponse;
+      try { result = JSON.parse(xhr.responseText) as ApiResponse; }
+      catch { reject(new Error("The server returned an invalid upload response.")); return; }
+      if (xhr.status < 200 || xhr.status >= 300 || !result.success) {
+        reject(new Error(result.message || "Upload failed."));
+        return;
+      }
+      resolve(result);
+    };
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 function formatBytes(bytes: number) {
@@ -43,6 +69,8 @@ export default function MediaLibrary({
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [dragActive, setDragActive] = useState(false);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "image" | "video">("all");
@@ -136,7 +164,8 @@ export default function MediaLibrary({
     const query = search.trim().toLowerCase();
 
     return assets.filter((asset) => {
-      const matchesType = filter === "all" || asset.type === filter;
+      const matchesType =
+  filter === "all" || asset.type === filter;
       const matchesSearch =
         !query ||
         asset.name.toLowerCase().includes(query) ||
@@ -155,15 +184,13 @@ export default function MediaLibrary({
     setError("");
 
     const invalidFile = files.find((file) => {
-      const supported =
-        file.type.startsWith("image/") &&
-        [
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/avif",
-          "image/gif",
-        ].includes(file.type);
+      const supportedImage = [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/avif",
+        "image/gif",
+      ].includes(file.type);
 
       const supportedVideo = [
         "video/mp4",
@@ -171,7 +198,7 @@ export default function MediaLibrary({
       ].includes(file.type);
 
       return (
-        (!supported && !supportedVideo) ||
+        (!supportedImage && !supportedVideo) ||
         file.size === 0 ||
         file.size > MAX_FILE_SIZE
       );
@@ -191,25 +218,12 @@ export default function MediaLibrary({
 
     try {
       for (const file of files) {
-        const formData = new FormData();
-        formData.append("file", file);
-
         try {
-          const response = await fetch(
-            "/api/admin/backgrounds/welcome-page/media",
-            {
-              method: "POST",
-              body: formData,
-            },
-          );
-
-          const data = (await response.json()) as ApiResponse;
-
-          if (!response.ok || !data.success) {
-            throw new Error(data.message || "Upload failed.");
-          }
-
+          await uploadWithProgress(file, (percent) => {
+            setUploadProgress(Math.round(((uploadedCount + percent / 100) / files.length) * 100));
+          });
           uploadedCount++;
+          setUploadProgress(Math.round((uploadedCount / files.length) * 100));
         } catch (err) {
           failures.push(
             `${file.name}: ${
@@ -232,6 +246,7 @@ export default function MediaLibrary({
       }
     } finally {
       setUploading(false);
+      setUploadProgress(0);
 
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -295,7 +310,7 @@ export default function MediaLibrary({
           </h2>
 
           <p className="mt-2 max-w-2xl text-sm text-slate-400">
-            Manage the images and videos used across your welcome page.
+            Manage images and videos used across your welcome page.
           </p>
         </div>
 
@@ -331,13 +346,24 @@ export default function MediaLibrary({
         </div>
       </header>
 
+      <div
+        onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false); }}
+        onDrop={(event) => { event.preventDefault(); setDragActive(false); if (!uploading) void uploadFiles(event.dataTransfer.files); }}
+        aria-label="Drop images or videos to upload"
+        className={`rounded-2xl border border-dashed p-4 text-center text-xs transition ${dragActive ? "border-indigo-300 bg-indigo-400/10 text-indigo-100" : "border-white/15 bg-white/[.02] text-slate-400"}`}
+      >
+        {dragActive ? "Release to upload supported media" : "Drag and drop images or videos here, or use Upload media above."}
+      </div>
+
       {uploading && (
         <div
           className="rounded-xl border border-indigo-400/20 bg-indigo-400/10 p-4 text-sm text-indigo-200"
           role="status"
         >
-          Uploading files. Please keep this page open until the upload
-          finishes.
+          <div className="flex items-center justify-between gap-3"><span>Uploading files…</span><span className="tabular-nums">{uploadProgress}%</span></div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-indigo-300 transition-[width]" style={{ width: `${uploadProgress}%` }} /></div>
         </div>
       )}
 
@@ -359,7 +385,7 @@ export default function MediaLibrary({
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
           <p className="text-sm text-slate-400">Total assets</p>
           <p className="mt-2 text-2xl font-bold">{assets.length}</p>
@@ -380,6 +406,7 @@ export default function MediaLibrary({
         </div>
       </div>
 
+
       <div className="flex flex-col gap-3 sm:flex-row">
         <input
           value={search}
@@ -390,17 +417,23 @@ export default function MediaLibrary({
         />
 
         <select
-          value={filter}
-          onChange={(event) =>
-            setFilter(event.target.value as "all" | "image" | "video")
-          }
-          aria-label="Filter media type"
-          className="rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-sm outline-none focus:border-indigo-400"
-        >
-          <option value="all">All media</option>
-          <option value="image">Images</option>
-          <option value="video">Videos</option>
-        </select>
+  value={filter}
+  onChange={(event) =>
+    setFilter(
+      event.target.value as
+        | "all"
+        | "image"
+        | "video",
+    )
+  }
+  aria-label="Filter media type"
+  className="rounded-xl border border-white/10 bg-[#080B14] px-4 py-3 text-sm outline-none focus:border-indigo-400"
+>
+  <option value="all">All media</option>
+  <option value="image">Images</option>
+  <option value="video">Videos</option>
+
+</select>
       </div>
 
       {loading ? (
@@ -409,7 +442,7 @@ export default function MediaLibrary({
         </div>
       ) : filteredAssets.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.02] p-12 text-center">
-          <div className="text-3xl">▧</div>
+          <div className="text-3xl">â–§</div>
 
           <h3 className="mt-3 font-semibold">
             {assets.length === 0
@@ -450,23 +483,22 @@ export default function MediaLibrary({
               >
                 <div className="relative aspect-video overflow-hidden bg-[#05070D]">
                   {asset.type === "video" ? (
-                    <video
-                      src={asset.url}
-                      controls
-                      preload="metadata"
-                      playsInline
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <Image
-  src={asset.url}
-  alt={asset.name}
-  fill
-  sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 33vw"
-  className="object-cover"
-/>
-                  )}
-
+  <video
+    src={asset.url}
+    controls
+    preload="metadata"
+    playsInline
+    className="h-full w-full object-cover"
+  />
+) : (
+  <Image
+    src={asset.url}
+    alt={asset.name}
+    fill
+    sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 33vw"
+    className="object-cover"
+  />
+)}
                   <span className="absolute left-3 top-3 rounded-lg border border-white/10 bg-black/70 px-2 py-1 text-xs font-medium uppercase text-white">
                     {asset.type}
                   </span>
@@ -494,7 +526,7 @@ export default function MediaLibrary({
 
                   <div className="flex flex-wrap gap-2">
                     {onSelect && (
-                      <button
+  <button
                         type="button"
                         onClick={() => onSelect(asset)}
                         className="flex-1 rounded-lg bg-indigo-500 px-3 py-2 text-sm font-semibold transition hover:bg-indigo-400"
@@ -524,10 +556,10 @@ export default function MediaLibrary({
       )}
 
       <p className="text-xs leading-5 text-slate-500">
-        Upload limit: 50 MB per file. Supported formats include JPEG, PNG,
-        WebP, AVIF, GIF, MP4 and WebM. Deleting an asset may break any page
-        that references it.
-      </p>
+  Upload limit: 50 MB per file. Supported formats include JPEG, PNG,
+  WebP, AVIF, GIF, MP4 and WebM.
+  Deleting an asset may break any page that references it.
+</p>
     </section>
   );
 }
